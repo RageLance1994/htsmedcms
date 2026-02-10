@@ -1,19 +1,4 @@
-const highlights = [
-  {
-    title: "Workflow tecnico unico",
-    body: "Riparazione, collaudo, ricambi, logistica e amministrazione nello stesso sistema."
-  },
-  {
-    title: "Tracciabilita completa",
-    body: "Ogni intervento e passaggio e registrato con timestamp, firma e responsabile."
-  },
-  {
-    title: "Spedizioni sotto controllo",
-    body: "Gestisci rigenerazione, magazzino e distribuzione con SLA chiari."
-  }
-];
-
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { useNavigate } from "react-router-dom";
 
 export default function AccessPage() {
@@ -22,6 +7,22 @@ export default function AccessPage() {
   const [password, setPassword] = useState("");
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
+
+  useEffect(() => {
+    const token = localStorage.getItem("hts_token");
+    const user = localStorage.getItem("hts_user");
+    if (token && user) {
+      navigate("/dashboard", { replace: true });
+    }
+  }, [navigate]);
+
+  useEffect(() => {
+    const isDark = localStorage.getItem("hts_dark") === "1";
+    document.documentElement.classList.toggle("dark", isDark);
+    document.body.classList.toggle("dark", isDark);
+    const rootEl = document.getElementById("root");
+    if (rootEl) rootEl.classList.toggle("dark", isDark);
+  }, []);
 
   const handleSubmit = async (event) => {
     event.preventDefault();
@@ -52,13 +53,13 @@ export default function AccessPage() {
   };
 
   return (
-    <div className="min-h-screen px-6 py-10 lg:px-12">
+    <div className="min-h-screen bg-[var(--page-bg)] px-6 py-10 text-[var(--page-fg)] lg:px-12">
       <div className="mx-auto flex min-h-[calc(100vh-5rem)] max-w-6xl items-center justify-center">
-        <section className="glass w-full max-w-xl rounded-3xl p-8 shadow-glow">
+        <section className="w-full max-w-xl rounded-3xl border border-[var(--border)] bg-[var(--surface)] p-8 shadow-lg">
           <div className="space-y-2">
-            <p className="text-xs font-semibold uppercase tracking-[0.3em] text-slate-500">Portale accesso</p>
-            <h2 className="text-3xl font-semibold text-slate-900">Accedi al tuo workspace</h2>
-            <p className="text-sm text-slate-500">Usa le tue credenziali sicure per continuare.</p>
+            <p className="text-xs font-semibold uppercase tracking-[0.3em] text-[var(--muted)]">Portale accesso</p>
+            <h2 className="text-3xl font-semibold">Accedi al tuo workspace</h2>
+            <p className="text-sm text-[var(--muted)]">Usa le tue credenziali sicure per continuare.</p>
           </div>
 
           <form className="space-y-4" onSubmit={handleSubmit}>
@@ -73,11 +74,11 @@ export default function AccessPage() {
                 placeholder="tecnico@htsmed.com"
                 value={email}
                 onChange={(event) => setEmail(event.target.value)}
-                className="w-full rounded-2xl border border-slate-200 bg-white px-4 py-3 text-sm text-slate-900 shadow-sm focus:border-teal-400 focus:outline-none focus:ring-2 focus:ring-teal-200"
+                className="w-full rounded-2xl border border-[var(--border)] bg-[var(--surface-strong)] px-4 py-3 text-sm text-[var(--page-fg)] shadow-sm placeholder:text-[var(--muted-2)] focus:border-teal-400 focus:outline-none focus:ring-2 focus:ring-teal-200"
               />
             </div>
             <div className="space-y-2">
-              <label className="text-xs font-semibold uppercase tracking-[0.2em] text-slate-500" htmlFor="password">
+              <label className="text-xs font-semibold uppercase tracking-[0.2em] text-[var(--muted)]" htmlFor="password">
                 Password
               </label>
               <input
@@ -87,15 +88,15 @@ export default function AccessPage() {
                 placeholder="Inserisci la password"
                 value={password}
                 onChange={(event) => setPassword(event.target.value)}
-                className="w-full rounded-2xl border border-slate-200 bg-white px-4 py-3 text-sm text-slate-900 shadow-sm focus:border-teal-400 focus:outline-none focus:ring-2 focus:ring-teal-200"
+                className="w-full rounded-2xl border border-[var(--border)] bg-[var(--surface-strong)] px-4 py-3 text-sm text-[var(--page-fg)] shadow-sm placeholder:text-[var(--muted-2)] focus:border-teal-400 focus:outline-none focus:ring-2 focus:ring-teal-200"
               />
             </div>
-            <div className="flex items-center justify-between text-sm text-slate-500">
+            <div className="flex items-center justify-between text-sm text-[var(--muted)]">
               <label className="flex items-center gap-2">
                 <input type="checkbox" className="h-4 w-4 rounded border-slate-300" />
                 Resta connesso
               </label>
-              <button type="button" className="font-semibold text-slate-700">
+              <button type="button" className="font-semibold text-[var(--page-fg)]">
                 Reimposta password
               </button>
             </div>
@@ -106,19 +107,19 @@ export default function AccessPage() {
             >
               {loading ? "Accesso in corso..." : "Continua"}
             </button>
-            {error ? <p className="text-sm text-rose-600">{error}</p> : null}
+              {error ? <p className="text-sm text-rose-600">{error}</p> : null}
           </form>
 
-          <div className="flex flex-col gap-3 text-sm text-slate-500">
-            <div className="mt-4 flex items-center gap-2 text-xs uppercase tracking-[0.3em] text-slate-400">
-              <span className="h-px flex-1 bg-slate-200" />
+          <div className="flex flex-col gap-3 text-sm text-[var(--muted)]">
+            <div className="mt-4 flex items-center gap-2 text-xs uppercase tracking-[0.3em] text-[var(--muted-2)]">
+              <span className="h-px flex-1 bg-[var(--border)]" />
               Accesso sicuro
-              <span className="h-px flex-1 bg-slate-200" />
+              <span className="h-px flex-1 bg-[var(--border)]" />
             </div>
             <div className="flex flex-col gap-2">
               <button
                 type="button"
-                className="flex w-full items-center justify-center gap-2 rounded-2xl border border-slate-200 bg-white px-3 py-2 text-xs font-semibold uppercase tracking-[0.2em] text-slate-600 transition hover:border-slate-300"
+                className="flex w-full items-center justify-center gap-2 rounded-2xl border border-[var(--border)] bg-[var(--surface)] px-3 py-2 text-xs font-semibold uppercase tracking-[0.2em] text-[var(--muted)] transition hover:border-[var(--border)] hover:bg-[var(--hover)]"
               >
                 <span className="inline-flex h-4 w-4 items-center justify-center">
                   <svg viewBox="0 0 24 24" className="h-4 w-4" aria-hidden="true">
@@ -132,7 +133,7 @@ export default function AccessPage() {
               </button>
               <button
                 type="button"
-                className="flex w-full items-center justify-center gap-2 rounded-2xl border border-slate-200 bg-white px-3 py-2 text-xs font-semibold uppercase tracking-[0.2em] text-slate-600 transition hover:border-slate-300"
+                className="flex w-full items-center justify-center gap-2 rounded-2xl border border-[var(--border)] bg-[var(--surface)] px-3 py-2 text-xs font-semibold uppercase tracking-[0.2em] text-[var(--muted)] transition hover:border-[var(--border)] hover:bg-[var(--hover)]"
               >
                 <span className="inline-flex h-4 w-4 items-center justify-center">
                   <svg viewBox="0 0 24 24" className="h-4 w-4" aria-hidden="true">
@@ -145,7 +146,7 @@ export default function AccessPage() {
                 SSO con Google Identity
               </button>
             </div>
-            <p className="text-center text-xs uppercase tracking-[0.3em] text-slate-400">
+            <p className="text-center text-xs uppercase tracking-[0.3em] text-[var(--muted-2)]">
               Nuova sede? Richiedi attivazione
             </p>
           </div>

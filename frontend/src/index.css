@@ -7,6 +7,17 @@
 
 :root {
   color-scheme: light;
+  --app-bg: linear-gradient(140deg, #eef2f6 0%, #e6edf4 55%, #dde7f0 100%);
+  --app-fg: #0a1020;
+  --page-bg: #ffffff;
+  --page-fg: #0f172a;
+  --surface: #ffffff;
+  --surface-strong: #ffffff;
+  --surface-soft: #f8fafc;
+  --border: #cbd5e1;
+  --muted: #64748b;
+  --muted-2: #94a3b8;
+  --hover: #f1f5f9;
 }
 
 * {
@@ -22,10 +33,23 @@ body,
 body {
   margin: 0;
   font-family: "Space Grotesk", "Segoe UI", sans-serif;
-  color: #0a1020;
-  background: radial-gradient(circle at top left, rgba(12, 148, 170, 0.22), transparent 40%),
-    radial-gradient(circle at 85% 10%, rgba(0, 132, 199, 0.18), transparent 45%),
-    linear-gradient(140deg, #eef2f6 0%, #e6edf4 55%, #dde7f0 100%);
+  color: var(--app-fg);
+  background: var(--app-bg);
+}
+
+html.dark {
+  color-scheme: dark;
+  --app-bg: linear-gradient(140deg, #0b0b0b 0%, #101010 55%, #141414 100%);
+  --app-fg: #f8fafc;
+  --page-bg: #0b0b0b;
+  --page-fg: #f1f5f9;
+  --surface: #111111;
+  --surface-strong: #161616;
+  --surface-soft: #1b1b1b;
+  --border: #2a2a2a;
+  --muted: #9ca3af;
+  --muted-2: #94a3b8;
+  --hover: #1f1f1f;
 }
 
 .glass {
