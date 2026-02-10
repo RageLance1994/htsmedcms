@@ -1,0 +1,54 @@
+steps:
+  # 0) Install frontend deps
+  - name: "node:20"
+    dir: frontend
+    args: ["npm", "ci"]
+
+  # 1) Build frontend (Vite -> frontend/dist)
+  - name: "node:20"
+    dir: frontend
+    args: ["npm", "run", "build"]
+
+  # 2) Copia dist nel backend (prepara il contesto Docker)
+  - name: "bash"
+    args:
+      ["-c", "rm -rf backend/dist && cp -r frontend/dist backend/dist"]
+
+  # 3) Build Docker image (contesto backend/)
+  - name: "gcr.io/cloud-builders/docker"
+    dir: backend
+    args:
+      [
+        "build",
+        "-t",
+        "europe-west1-docker.pkg.dev/$PROJECT_ID/htsmedcms-backend/app:$SHORT_SHA",
+        "."
+      ]
+
+  # 4) Push Docker image
+  - name: "gcr.io/cloud-builders/docker"
+    dir: backend
+    args:
+      [
+        "push",
+        "europe-west1-docker.pkg.dev/$PROJECT_ID/htsmedcms-backend/app:$SHORT_SHA"
+      ]
+
+  # 5) Deploy to Cloud Run
+  - name: "gcr.io/google.com/cloudsdktool/cloud-sdk"
+    entrypoint: gcloud
+    args:
+      [
+        "run",
+        "deploy",
+        "htsmedcms-backend",
+        "--image",
+        "europe-west1-docker.pkg.dev/$PROJECT_ID/htsmedcms-backend/app:$SHORT_SHA",
+        "--region",
+        "europe-west1",
+        "--platform",
+        "managed",
+        "--allow-unauthenticated"
+      ]
+
+logsBucket: gs://htsmedcms-cloudbuild-logs

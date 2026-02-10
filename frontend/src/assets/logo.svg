@@ -1,0 +1,25 @@
+<svg width="512" height="384" viewBox="0 0 512 384" fill="none" xmlns="http://www.w3.org/2000/svg">
+  <defs>
+    <linearGradient id="logoStroke" x1="64" y1="64" x2="448" y2="320" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#1E4E8C"/>
+      <stop offset="1" stop-color="#19A0D8"/>
+    </linearGradient>
+  </defs>
+  <g stroke="url(#logoStroke)" stroke-width="16" stroke-linecap="round" stroke-linejoin="round">
+    <!-- Left wing arcs -->
+    <path d="M116 190 C116 110 168 64 240 64" />
+    <path d="M92 210 C92 120 154 76 240 76" />
+    <path d="M72 232 C72 130 146 92 238 92" />
+    <path d="M60 252 C60 150 148 114 236 114" />
+    <!-- Right wing arcs -->
+    <path d="M396 190 C396 110 344 64 272 64" />
+    <path d="M420 210 C420 120 358 76 272 76" />
+    <path d="M440 232 C440 130 366 92 274 92" />
+    <path d="M452 252 C452 150 364 114 276 114" />
+    <!-- Head -->
+    <path d="M262 114 C280 114 296 102 296 86" />
+    <!-- Tail -->
+    <path d="M248 250 L248 320" />
+    <path d="M264 250 L264 320" />
+  </g>
+</svg>
