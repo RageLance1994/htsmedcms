@@ -1,6 +1,26 @@
 @import url("https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;600;700&display=swap");
 @import "@fortawesome/fontawesome-free/css/all.min.css";
 
+@media (max-width: 639px) {
+  html,
+  body,
+  #root {
+    overflow-x: hidden;
+  }
+  .warehouse-toolbar {
+    overflow-x: auto;
+    overflow-y: visible;
+    -webkit-overflow-scrolling: touch;
+    scrollbar-width: thin;
+  }
+  .warehouse-toolbar > * {
+    flex: 0 0 auto;
+  }
+  .warehouse-table {
+    min-width: 1080px;
+  }
+}
+
 @tailwind base;
 @tailwind components;
 @tailwind utilities;

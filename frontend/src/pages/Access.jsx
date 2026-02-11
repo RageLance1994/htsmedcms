@@ -103,7 +103,7 @@ export default function AccessPage() {
             <button
               type="submit"
               disabled={loading}
-              className="w-full rounded-2xl bg-teal-600 px-4 py-3 text-sm font-semibold text-white shadow-lg shadow-teal-200 transition hover:bg-teal-500 disabled:cursor-not-allowed disabled:opacity-70"
+              className="w-full rounded-2xl bg-teal-600 px-4 py-3 text-sm font-semibold text-white shadow-lg shadow-teal-200 transition hover:bg-teal-500 disabled:cursor-not-allowed disabled:opacity-70 dark:shadow-none"
             >
               {loading ? "Accesso in corso..." : "Continua"}
             </button>

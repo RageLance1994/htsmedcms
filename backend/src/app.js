@@ -6,6 +6,7 @@ import { fileURLToPath } from "url";
 
 import healthRouter from "./routes/health.js";
 import authRouter from "./routes/auth.js";
+import warehouseRouter from "./routes/warehouse.js";
 
 const app = express();
 const isProduction = process.env.NODE_ENV === "production" || !!process.env.K_SERVICE;
@@ -40,6 +41,7 @@ app.get("/api", (req, res) => {
 
 app.use("/api/auth", authRouter);
 app.use("/api/health", healthRouter);
+app.use("/api/warehouse", warehouseRouter);
 
 if (isProduction) {
   const __filename = fileURLToPath(import.meta.url);
