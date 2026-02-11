@@ -312,64 +312,6 @@ export default function WarehouseGiacenze() {
         </div>
       </div>
 
-      {caricoScaricoMode ? (
-        <section className="rounded-lg border border-[var(--border)] bg-[var(--surface)] p-4">
-          <div className="flex flex-wrap items-center justify-between gap-3">
-            <div>
-              <p className="text-xs uppercase tracking-[0.2em] text-[var(--muted)]">Modulo</p>
-              <h2 className="text-lg font-semibold">
-                {caricoScaricoMode === "carico" ? "Carico Merce" : "Scarico Merce"}
-              </h2>
-            </div>
-            <button
-              type="button"
-              className="rounded-md border border-[var(--border)] px-3 py-2 text-xs uppercase tracking-[0.2em] text-[var(--muted)]"
-              onClick={() => setCaricoScaricoMode("")}
-            >
-              Chiudi
-            </button>
-          </div>
-          <div className="mt-4 grid gap-3 md:grid-cols-3">
-            <div className="rounded-md border border-[var(--border)] bg-[var(--surface-strong)] p-3">
-              <p className="text-xs uppercase tracking-[0.2em] text-[var(--muted)]">Articolo</p>
-              <div className="mt-2 text-sm text-[var(--page-fg)]">{rowMenu.item?.codiceArticolo || "-"}</div>
-              <div className="text-xs text-[var(--muted)]">{rowMenu.item?.descrizione || ""}</div>
-            </div>
-            <div className="rounded-md border border-[var(--border)] bg-[var(--surface-strong)] p-3">
-              <label className="text-xs uppercase tracking-[0.2em] text-[var(--muted)]">Quantita</label>
-              <input
-                type="number"
-                className="mt-2 w-full rounded-md border border-[var(--border)] bg-[var(--surface)] px-3 py-2 text-sm"
-                placeholder="0"
-              />
-            </div>
-            <div className="rounded-md border border-[var(--border)] bg-[var(--surface-strong)] p-3">
-              <label className="text-xs uppercase tracking-[0.2em] text-[var(--muted)]">Deposito</label>
-              <select className="mt-2 w-full rounded-md border border-[var(--border)] bg-[var(--surface)] px-3 py-2 text-sm">
-                <option>Sede</option>
-                <option>Cliente</option>
-                <option>Fornitore</option>
-              </select>
-            </div>
-          </div>
-          <div className="mt-4 flex items-center gap-2">
-            <button
-              type="button"
-              className="rounded-md bg-emerald-500 px-3 py-2 text-sm font-semibold text-white"
-            >
-              Conferma
-            </button>
-            <button
-              type="button"
-              className="rounded-md border border-[var(--border)] px-3 py-2 text-sm"
-              onClick={() => setCaricoScaricoMode("")}
-            >
-              Annulla
-            </button>
-          </div>
-        </section>
-      ) : null}
-
       <section className="warehouse-section flex min-h-0 flex-1 flex-col rounded-lg border border-[var(--border)] bg-[var(--surface)] p-3 sm:p-4 min-w-0 w-full max-w-full overflow-x-hidden">
         <div className="min-w-0">
           <div className="flex min-w-0 items-end">
@@ -677,7 +619,10 @@ export default function WarehouseGiacenze() {
                                   </thead>
                                   <tbody>
                                     {serialsByCode[item.codiceArticolo].map((row, idx) => (
-                                      <tr key={`${row.seriale || "serial"}-${idx}`} className="border-t border-[var(--border)]">
+                                      <tr
+                                        key={`${row.seriale || "serial"}-${idx}`}
+                                        className={`border-t border-[var(--border)] ${row.placeholder ? "text-rose-400" : ""}`}
+                                      >
                                         <td className="px-3 py-2">{row.codiceArticolo}</td>
                                         <td className="px-3 py-2">{row.seriale || "-"}</td>
                                         <td className="px-3 py-2">{formatDate(row.dataMovimento)}</td>
@@ -722,6 +667,7 @@ export default function WarehouseGiacenze() {
             <i className="fa-solid fa-eye text-[12px] text-[var(--muted)]" aria-hidden="true" />
             Visualizza
           </button>
+          <div className="my-1 h-px w-full bg-[var(--border)]" aria-hidden="true" />
           <button
             type="button"
             className="flex w-full items-center gap-2 rounded-md px-3 py-2 text-sm hover:bg-[var(--hover)]"
@@ -741,9 +687,10 @@ export default function WarehouseGiacenze() {
               setRowMenu({ open: false, x: 0, y: 0, item: rowMenu.item });
             }}
           >
-            <i className="fa-solid fa-arrow-down-from-bracket text-[12px] text-[var(--muted)]" aria-hidden="true" />
+            <i className="fa-solid fa-arrow-up-from-bracket text-[12px] text-[var(--muted)] rotate-180" aria-hidden="true" />
             Scarica
           </button>
+          <div className="my-1 h-px w-full bg-[var(--border)]" aria-hidden="true" />
           <button
             type="button"
             className="flex w-full items-center gap-2 rounded-md px-3 py-2 text-sm hover:bg-[var(--hover)]"
@@ -767,6 +714,7 @@ export default function WarehouseGiacenze() {
           </button>
         </div>
       ) : null}
+
     </AppLayout>
   );
 }

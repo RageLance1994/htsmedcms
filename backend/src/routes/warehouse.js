@@ -120,7 +120,23 @@ router.get("/giacenze/seriali", async (req, res) => {
     ];
 
     const rows = await db.collection("Allocazione Magazzino").aggregate(pipeline).toArray();
-    res.json({ codice, rows });
+    const expected = await db.collection("warehouse_giacenze").findOne(
+      { codiceArticolo: codice },
+      { projection: { _id: 0, giacenzaFisica: 1 } }
+    );
+    const expectedQty = Math.max(Number(expected?.giacenzaFisica || 0), 0);
+    const missing = Math.max(expectedQty - rows.length, 0);
+    if (missing > 0) {
+      for (let i = 0; i < missing; i += 1) {
+        rows.push({
+          codiceArticolo: codice,
+          seriale: `NON ASSEGNATO ${i + 1}`,
+          dataMovimento: null,
+          placeholder: true
+        });
+      }
+    }
+    res.json({ codice, rows, expectedQty });
   } catch (error) {
     res.status(500).json({ errore: "Errore caricamento seriali", dettaglio: error.message });
   }
