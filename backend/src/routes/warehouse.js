@@ -142,4 +142,244 @@ router.get("/giacenze/seriali", async (req, res) => {
   }
 });
 
+router.get("/causali", async (req, res) => {
+  try {
+    const db = getWarehouseDb();
+    const tipo = String(req.query.tipo || "").toLowerCase();
+    const soloNonNascoste = String(req.query.soloNonNascoste || "1") === "1";
+
+    const match = {};
+    if (soloNonNascoste) {
+      match.Nascondi = { $ne: true };
+    }
+    if (tipo === "carico") {
+      match["Azione su Giacenza Fisica"] = { $gt: 0 };
+    }
+    if (tipo === "scarico") {
+      match["Azione su Giacenza Fisica"] = { $lt: 0 };
+    }
+
+    const [causali, depositi] = await Promise.all([
+      db
+        .collection("Causali di magazzino")
+        .find(match, { projection: { _id: 0 } })
+        .sort({ "Descrizione Movimento": 1 })
+        .toArray(),
+      db
+        .collection("Depositi_Fiscali")
+        .find({}, { projection: { _id: 0, Cod: 1, Descrizione: 1 } })
+        .toArray()
+    ]);
+
+    const depositoMap = new Map(depositi.map((d) => [Number(d.Cod), d.Descrizione]));
+    const data = causali.map((row) => {
+      const depIniziale = Number(row["Deposito Iniziale"]);
+      const depFinale = Number(row["Deposito Finale"]);
+      return {
+        cod: row.cod,
+        descrizioneMovimento: row["Descrizione Movimento"],
+        depositoIniziale: depIniziale,
+        depositoFinale: depFinale,
+        depositoInizialeNome: depositoMap.get(depIniziale) || String(depIniziale || "-"),
+        depositoFinaleNome: depositoMap.get(depFinale) || String(depFinale || "-"),
+        nascondi: row.Nascondi === true,
+        note: row.Note || "",
+        azioneFisica: row["Azione su Giacenza Fisica"] ?? 0,
+        azioneFiscale: row["Azione su Giacenza Fiscale"] ?? 0
+      };
+    });
+
+    res.json({ tipo, data });
+  } catch (error) {
+    res.status(500).json({ errore: "Errore caricamento causali", dettaglio: error.message });
+  }
+});
+
+router.get("/articoli", async (req, res) => {
+  try {
+    const db = getWarehouseDb();
+    const search = String(req.query.search || "").trim();
+    const limit = Math.min(Math.max(parseInt(req.query.limit || "200", 10), 10), 2000);
+
+    const match = {};
+    if (search) {
+      const re = new RegExp(search.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"), "i");
+      match.$or = [{ "Codice Articolo": re }, { Descrizione: re }];
+    }
+
+    const rows = await db
+      .collection("Codici_di_magazzino")
+      .find(match, { projection: { _id: 0 } })
+      .sort({ "Codice Articolo": 1 })
+      .limit(limit)
+      .toArray();
+
+    const data = rows.map((row) => ({
+      codiceArticolo: row["Codice Articolo"],
+      descrizione: row.Descrizione || "",
+      unitaMisura: row["UnitÃ  di Misura"] || row["Unità di Misura"] || row["Unità di misura"] || "",
+      ammetteSeriale: row["Ammette Seriale"] === true,
+      obsoleto: row.Obsoleto === true,
+      costoAcquisto: row["Costo di Acquisto"] ?? null
+    }));
+
+    res.json({ data });
+  } catch (error) {
+    res.status(500).json({ errore: "Errore caricamento articoli", dettaglio: error.message });
+  }
+});
+
+router.get("/fornitori", async (req, res) => {
+  try {
+    const db = getWarehouseDb();
+    const search = String(req.query.search || "").trim();
+    const limit = Math.min(Math.max(parseInt(req.query.limit || "200", 10), 10), 2000);
+
+    const match = {};
+    if (search) {
+      const re = new RegExp(search.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"), "i");
+      match.$or = [{ Nominativo: re }, { PIVA: re }];
+    }
+
+    const rows = await db
+      .collection("Anagrafica")
+      .find(match, { projection: { _id: 0 } })
+      .sort({ Nominativo: 1 })
+      .limit(limit)
+      .toArray();
+
+    const data = rows.map((row) => ({
+      cod: row.COD,
+      nominativo: row.Nominativo || "",
+      piva: row.PIVA || "",
+      indirizzo: row.Indirizzo || "",
+      citta: row.Citta || "",
+      cap: row.CAP || "",
+      note: row.note || "",
+      agenziaRiferimento: row["Agenzia di Riferimento"] || row["Agenzia di riferimento"] || row["Agenzia Riferimento"] || ""
+    }));
+
+    res.json({ data });
+  } catch (error) {
+    res.status(500).json({ errore: "Errore caricamento fornitori", dettaglio: error.message });
+  }
+});
+
+router.post("/carico", async (req, res) => {
+  try {
+    const db = getWarehouseDb();
+    const { causale, dataMovimento, fornitore, items } = req.body || {};
+    if (!causale || !dataMovimento || !Array.isArray(items) || items.length === 0) {
+      return res.status(400).json({ errore: "Dati carico incompleti" });
+    }
+
+    const last = await db
+      .collection("Movimenti di magazzino")
+      .find({}, { projection: { cod: 1 } })
+      .sort({ cod: -1 })
+      .limit(1)
+      .toArray();
+    let nextCod = Number(last?.[0]?.cod || 0) + 1;
+
+    const now = new Date();
+    const date = new Date(dataMovimento);
+    const docs = items.map((item) => {
+      const qty = Math.max(Number(item.quantita || 0), 0);
+      const articolo = item.articolo || {};
+      return {
+        Data: Number.isNaN(date.getTime()) ? now : date,
+        Cod_Causale: Number(causale.cod),
+        Cod_Articolo: articolo.codiceArticolo || item.codiceArticolo,
+        "QT movimentata": qty,
+        "Part Number": articolo.partNumber || item.partNumber || null,
+        "Costo di Acquisto": articolo.costoAcquisto ?? null,
+        "Prezzo di Vendita": null,
+        Cod_DDT: null,
+        Note: item.note || "",
+        cod: nextCod++,
+        cod_azienda: 1,
+        cod_cliente: fornitore?.cod ?? null,
+        Riferimento: fornitore?.nominativo || "",
+        LastEditDate: now,
+        CreationDate: now,
+        Cod_Allegato: null,
+        Cod_Allegato_Foto: null,
+        "UnitÃ  di Misura": articolo.unitaMisura || null
+      };
+    });
+
+    await db.collection("Movimenti di magazzino").insertMany(docs);
+
+    const codes = docs.map((doc) => doc.Cod_Articolo).filter(Boolean);
+    if (codes.length) {
+      const pipeline = [
+        { $addFields: { codiceTrim: { $trim: { input: "$Codice Articolo" } } } },
+        { $match: { codiceTrim: { $in: codes } } },
+        {
+          $lookup: {
+            from: "Movimenti di magazzino",
+            let: { code: "$codiceTrim" },
+            pipeline: [
+              { $match: { $expr: { $eq: ["$Cod_Articolo", "$$code"] } } },
+              {
+                $lookup: {
+                  from: "Causali di magazzino",
+                  localField: "Cod_Causale",
+                  foreignField: "cod",
+                  as: "causale"
+                }
+              },
+              { $unwind: { path: "$causale", preserveNullAndEmptyArrays: true } },
+              {
+                $project: {
+                  qty: "$QT movimentata",
+                  azFisica: "$causale.Azione su Giacenza Fisica",
+                  azFiscale: "$causale.Azione su Giacenza Fiscale"
+                }
+              },
+              {
+                $group: {
+                  _id: null,
+                  giacenzaFisica: {
+                    $sum: { $multiply: ["$qty", { $ifNull: ["$azFisica", 0] }] }
+                  },
+                  giacenzaFiscale: {
+                    $sum: { $multiply: ["$qty", { $ifNull: ["$azFiscale", 0] }] }
+                  }
+                }
+              }
+            ],
+            as: "movimentiAgg"
+          }
+        },
+        {
+          $addFields: {
+            giacenzaFisica: { $ifNull: [{ $arrayElemAt: ["$movimentiAgg.giacenzaFisica", 0] }, 0] },
+            giacenzaFiscale: { $ifNull: [{ $arrayElemAt: ["$movimentiAgg.giacenzaFiscale", 0] }, 0] }
+          }
+        },
+        {
+          $project: {
+            _id: 0,
+            codiceArticolo: "$codiceTrim",
+            descrizione: "$Descrizione",
+            unitaMisura: "$UnitÃ  di Misura",
+            giacenzaMinima: "$Giacenza Minina",
+            alertGiacenza: "$Alert Giacenza",
+            giacenzaFisica: 1,
+            giacenzaFiscale: 1,
+            obsoleto: "$Obsoleto"
+          }
+        },
+        { $merge: { into: "warehouse_giacenze", whenMatched: "replace", whenNotMatched: "insert" } }
+      ];
+      await db.collection("Codici_di_magazzino").aggregate(pipeline, { allowDiskUse: true }).toArray();
+    }
+
+    res.json({ ok: true, inserted: docs.length });
+  } catch (error) {
+    res.status(500).json({ errore: "Errore salvataggio carico", dettaglio: error.message });
+  }
+});
+
 export default router;
