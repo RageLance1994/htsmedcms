@@ -25,6 +25,7 @@ const normalizeUnit = (value) => {
 const DDT_FILE_TYPES = ["ddt", "fattura del vettore", "fattura d'aquisto", "immagine prodotto"];
 
 export default function WarehouseGiacenze() {
+  const initialDprRef = useRef(null);
   const [items, setItems] = useState([]);
   const [page, setPage] = useState(1);
   const [search, setSearch] = useState("");
@@ -75,6 +76,7 @@ export default function WarehouseGiacenze() {
   const [movementNotes, setMovementNotes] = useState("");
   const [purchaseCost, setPurchaseCost] = useState("");
   const [desktopExtraCardsCollapsed, setDesktopExtraCardsCollapsed] = useState(false);
+  const [compactCaricoLayout, setCompactCaricoLayout] = useState(false);
   const [ddtImporting, setDdtImporting] = useState(false);
   const [labelScanning, setLabelScanning] = useState(false);
   const [aiAssistError, setAiAssistError] = useState("");
@@ -269,6 +271,41 @@ export default function WarehouseGiacenze() {
       supplierDefaultedRef.current = false;
     }
   }, [caricoWizardOpen]);
+
+  useEffect(() => {
+    const updateCompactLayout = () => {
+      const vv = window.visualViewport;
+      const scale = Number(vv?.scale || 1);
+      const innerW = Number(window.innerWidth || 0);
+      const outerW = Number(window.outerWidth || 0);
+      const browserZoom = innerW > 0 && outerW > 0 ? outerW / innerW : 1;
+      const currentDpr = Number(window.devicePixelRatio || 1);
+      if (initialDprRef.current === null) {
+        initialDprRef.current = currentDpr;
+      }
+      const dprZoom = currentDpr / Number(initialDprRef.current || 1);
+      const height = Number(vv?.height || window.innerHeight || 0);
+      const width = Number(vv?.width || window.innerWidth || 0);
+      const zoomFactor = Math.max(scale, browserZoom, dprZoom);
+      const compact = zoomFactor >= 1.12 || height < 820 || (width > 1024 && height < 940);
+      setCompactCaricoLayout(compact);
+    };
+
+    updateCompactLayout();
+    window.addEventListener("resize", updateCompactLayout);
+    window.visualViewport?.addEventListener("resize", updateCompactLayout);
+    return () => {
+      window.removeEventListener("resize", updateCompactLayout);
+      window.visualViewport?.removeEventListener("resize", updateCompactLayout);
+    };
+  }, []);
+
+  useEffect(() => {
+    if (!caricoWizardOpen) return;
+    if (compactCaricoLayout) {
+      setDesktopExtraCardsCollapsed(true);
+    }
+  }, [caricoWizardOpen, compactCaricoLayout]);
 
   useEffect(() => {
     if (!caricoWizardOpen || suppliers.length === 0) return;
@@ -1254,8 +1291,8 @@ export default function WarehouseGiacenze() {
 
       {caricoWizardOpen ? (
         <div className="fixed inset-0 z-[60] overflow-hidden bg-[var(--page-bg)] text-[var(--page-fg)]">
-          <div className="h-full w-full overflow-hidden">
-            <div className="flex h-full w-full flex-col overflow-hidden bg-[var(--surface)]">
+          <div className="h-full w-full overflow-y-auto overflow-x-hidden lg:overflow-hidden">
+            <div className="flex min-h-full w-full flex-col bg-[var(--surface)] lg:h-full lg:overflow-hidden">
               <div className="relative border-b border-[var(--border)] px-4 py-3">
                 <div className="pr-12">
                   <h2 className="text-lg font-semibold">Carico Merce</h2>
@@ -1381,7 +1418,7 @@ export default function WarehouseGiacenze() {
                   </div>
                 </div>
               </div>
-              <div className="min-h-0 flex-1 overflow-y-auto overflow-x-hidden px-3 py-3 sm:px-4 sm:py-4">
+              <div className="min-h-0 flex-1 overflow-visible overflow-x-hidden px-3 py-3 sm:px-4 sm:py-4 lg:overflow-y-auto">
                 <div className="flex min-h-0 flex-col gap-4 lg:h-full">
                 <section className="w-full rounded-lg border border-[var(--border)] bg-[var(--surface)] p-3">
                   <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-6">
@@ -1410,9 +1447,9 @@ export default function WarehouseGiacenze() {
                   </div>
                 </section>
 
-                <section className="w-full bg-[var(--surface)] p-0 xl:min-h-0 xl:flex-1">
-                  <div className="grid grid-cols-1 gap-2 sm:gap-3 xl:h-full xl:min-h-0 xl:grid-cols-2 xl:items-stretch">
-                    <div className="flex min-h-[300px] min-w-0 flex-col rounded-lg bg-[var(--surface)] p-3 sm:p-4 xl:min-h-0">
+                <section className="w-full bg-[var(--surface)] p-0 lg:min-h-0 lg:flex-1">
+                  <div className="grid grid-cols-1 gap-2 sm:gap-3 lg:h-full lg:min-h-0 lg:grid-cols-2 lg:items-stretch">
+                    <div className="flex min-h-[300px] min-w-0 flex-col rounded-lg bg-[var(--surface)] p-3 sm:p-4 lg:min-h-0">
                       <div className="flex items-center gap-2">
                         <p className="text-xs uppercase tracking-[0.2em] text-[var(--muted)]">Archivio articoli</p>
                         <button
@@ -1434,9 +1471,9 @@ export default function WarehouseGiacenze() {
                         />
                         {articlesLoading ? <span className="ml-2 text-xs text-[var(--muted)]">Caricamento...</span> : null}
                       </div>
-                      <div className="mt-3 h-[42vh] min-h-[240px] max-h-[380px] overflow-auto rounded-md border border-[var(--border)] xl:min-h-0 xl:h-auto xl:max-h-none xl:flex-1">
-                        <table className="min-w-[460px] w-full text-xs">
-                          <thead className="sticky top-0 z-10 bg-[var(--surface-strong)] text-[9px] uppercase tracking-[0.2em] text-[var(--muted)]">
+                    <div className="mt-3 h-[42vh] min-h-[240px] max-h-[380px] overflow-auto rounded-md border border-[var(--border)] lg:min-h-0 lg:h-auto lg:max-h-none lg:flex-1">
+                        <table className={`min-w-[460px] w-full ${compactCaricoLayout ? "text-[10px]" : "text-xs"}`}>
+                          <thead className={`sticky top-0 z-10 bg-[var(--surface-strong)] uppercase tracking-[0.2em] text-[var(--muted)] ${compactCaricoLayout ? "text-[8px]" : "text-[9px]"}`}>
                             <tr className="text-left">
                               <th className="px-3 py-2">Codice</th>
                               <th className="px-3 py-2">Descrizione</th>
@@ -1453,9 +1490,9 @@ export default function WarehouseGiacenze() {
                                 }`}
                                 onClick={() => setSelectedArticle(row)}
                               >
-                                <td className="px-3 py-2 font-semibold text-[12px]">{row.codiceArticolo}</td>
-                                <td className="px-3 py-2 text-[12px]">{row.descrizione}</td>
-                                <td className="px-3 py-2 text-[12px]">{row.unitaMisura || "-"}</td>
+                                <td className={`px-3 py-2 font-semibold ${compactCaricoLayout ? "text-[11px]" : "text-[12px]"}`}>{row.codiceArticolo}</td>
+                                <td className={`px-3 py-2 ${compactCaricoLayout ? "text-[11px]" : "text-[12px]"}`}>{row.descrizione}</td>
+                                <td className={`px-3 py-2 ${compactCaricoLayout ? "text-[11px]" : "text-[12px]"}`}>{row.unitaMisura || "-"}</td>
                                 <td className="px-2 py-2 text-right">
                                   <button
                                     type="button"
@@ -1484,7 +1521,7 @@ export default function WarehouseGiacenze() {
                       </div>
                     </div>
 
-                    <div className="flex min-h-[300px] min-w-0 flex-col rounded-lg bg-[var(--surface)] p-3 sm:p-4 xl:min-h-0">
+                    <div className="flex min-h-[300px] min-w-0 flex-col rounded-lg bg-[var(--surface)] p-3 sm:p-4 lg:min-h-0">
                       <div className="flex items-center justify-between">
                         <p className="text-xs uppercase tracking-[0.2em] text-[var(--muted)]">Righe movimento</p>
                         <span className="text-xs text-[var(--muted)]">{movementItems.length} righe</span>
@@ -1499,9 +1536,9 @@ export default function WarehouseGiacenze() {
                           className="ml-3 w-full cursor-default bg-transparent text-sm outline-none"
                         />
                       </div>
-                      <div className="mt-3 h-[42vh] min-h-[240px] max-h-[380px] overflow-auto rounded-md border border-[var(--border)] xl:min-h-0 xl:h-auto xl:max-h-none xl:flex-1">
-                        <table className="min-w-[760px] w-full text-xs">
-                          <thead className="sticky top-0 bg-[var(--surface-strong)] text-[9px] uppercase tracking-[0.2em] text-[var(--muted)]">
+                      <div className="mt-3 h-[42vh] min-h-[240px] max-h-[380px] overflow-auto rounded-md border border-[var(--border)] lg:min-h-0 lg:h-auto lg:max-h-none lg:flex-1">
+                        <table className={`min-w-[760px] w-full ${compactCaricoLayout ? "text-[10px]" : "text-xs"}`}>
+                          <thead className={`sticky top-0 bg-[var(--surface-strong)] uppercase tracking-[0.2em] text-[var(--muted)] ${compactCaricoLayout ? "text-[8px]" : "text-[9px]"}`}>
                             <tr className="text-left">
                               <th className="px-3 py-2">Codice articolo</th>
                               <th className="px-3 py-2">Seriale</th>
@@ -1520,7 +1557,7 @@ export default function WarehouseGiacenze() {
                                 }`}
                                 onClick={() => setSelectedMovementItemId(row.id)}
                               >
-                                <td className="px-3 py-2 text-[12px]">
+                                <td className={`px-3 py-2 ${compactCaricoLayout ? "text-[11px]" : "text-[12px]"}`}>
                                   <div className="flex items-center gap-2">
                                     <button
                                       type="button"
@@ -1537,11 +1574,11 @@ export default function WarehouseGiacenze() {
                                     <span>{row.articolo?.codiceArticolo || "-"}</span>
                                   </div>
                                 </td>
-                                <td className="px-3 py-2 text-[12px]">{row.seriali?.[0] || "-"}</td>
-                                <td className="px-3 py-2 text-[12px]">{row.articolo?.scaffale || "-"}</td>
-                                <td className="px-3 py-2 text-[12px]">{row.articolo?.riga || "-"}</td>
-                                <td className="px-3 py-2 text-[12px]">{row.articolo?.colonna || "-"}</td>
-                                <td className="px-3 py-2 text-[12px] text-[var(--muted)]">{row.note || "-"}</td>
+                                <td className={`px-3 py-2 ${compactCaricoLayout ? "text-[11px]" : "text-[12px]"}`}>{row.seriali?.[0] || "-"}</td>
+                                <td className={`px-3 py-2 ${compactCaricoLayout ? "text-[11px]" : "text-[12px]"}`}>{row.articolo?.scaffale || "-"}</td>
+                                <td className={`px-3 py-2 ${compactCaricoLayout ? "text-[11px]" : "text-[12px]"}`}>{row.articolo?.riga || "-"}</td>
+                                <td className={`px-3 py-2 ${compactCaricoLayout ? "text-[11px]" : "text-[12px]"}`}>{row.articolo?.colonna || "-"}</td>
+                                <td className={`px-3 py-2 text-[var(--muted)] ${compactCaricoLayout ? "text-[11px]" : "text-[12px]"}`}>{row.note || "-"}</td>
                               </tr>
                             ))}
                             {movementItems.length === 0 ? (
@@ -1563,10 +1600,15 @@ export default function WarehouseGiacenze() {
                   <button
                     type="button"
                     title={desktopExtraCardsCollapsed ? "ESPANDI dettagli" : "COMPRIMI dettagli"}
-                    onClick={() => setDesktopExtraCardsCollapsed((prev) => !prev)}
-                    className="absolute left-1/2 top-1/2 inline-flex h-6 min-w-[44px] -translate-x-1/2 -translate-y-1/2 items-center justify-center rounded-full border border-[var(--border)] bg-[var(--surface)] px-3 text-[var(--muted)] hover:bg-[var(--hover)]"
+                    onClick={() => {
+                      if (compactCaricoLayout) return;
+                      setDesktopExtraCardsCollapsed((prev) => !prev);
+                    }}
+                    className="absolute left-1/2 top-1/2 inline-flex h-6 min-w-[44px] -translate-x-1/2 -translate-y-1/2 items-center justify-center rounded-full border border-[var(--border)] bg-[var(--surface)] px-3 text-[var(--muted)] hover:bg-[var(--hover)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald-400/60 disabled:cursor-not-allowed disabled:opacity-40"
                     aria-expanded={!desktopExtraCardsCollapsed}
                     aria-controls="carico-extra-cards"
+                    aria-label={desktopExtraCardsCollapsed ? "Espandi dettagli card inferiori" : "Comprimi dettagli card inferiori"}
+                    disabled={compactCaricoLayout}
                   >
                     <i
                       className={`fa-solid text-[11px] ${desktopExtraCardsCollapsed ? "fa-caret-down" : "fa-caret-up"}`}
@@ -1577,7 +1619,7 @@ export default function WarehouseGiacenze() {
 
                 <div
                   className={`max-h-none overflow-visible opacity-100 lg:overflow-hidden lg:transition-[max-height,opacity] lg:duration-300 lg:ease-out ${
-                    desktopExtraCardsCollapsed ? "lg:max-h-0 lg:opacity-0" : "lg:max-h-[520px] lg:opacity-100"
+                    desktopExtraCardsCollapsed || compactCaricoLayout ? "lg:max-h-0 lg:opacity-0 lg:pointer-events-none" : "lg:max-h-[520px] lg:opacity-100"
                   }`}
                 >
                 <section
@@ -1585,14 +1627,14 @@ export default function WarehouseGiacenze() {
                   className="grid w-full items-start gap-3 lg:grid-cols-12 lg:items-stretch lg:gap-4"
                 >
                   <div className="h-full rounded-lg border border-[var(--border)] bg-[var(--surface)] p-3 lg:col-span-6 lg:flex lg:flex-col lg:p-2.5">
-                    <p className="text-[11px] uppercase tracking-[0.2em] text-[var(--muted)]">Registrazione DDT</p>
+                    <p className={`${compactCaricoLayout ? "text-[10px]" : "text-[11px]"} uppercase tracking-[0.2em] text-[var(--muted)]`}>Registrazione DDT</p>
                     <label className="mt-2 block text-xs lg:mt-1.5">
                       <span className="text-xs uppercase tracking-[0.2em] text-[var(--muted)]">Codice</span>
                       <input
                         type="text"
                         value={ddtCode}
                         onChange={(event) => setDdtCode(event.target.value)}
-                        className="mt-1.5 w-full rounded-md border border-[var(--border)] bg-[var(--surface)] px-3 py-2 text-xs lg:py-1.5"
+                        className="mt-1.5 w-full rounded-md border border-[var(--border)] bg-[var(--surface)] px-3 py-2 text-xs lg:py-1.5 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald-400/60"
                         placeholder="Inserisci codice DDT"
                       />
                     </label>
@@ -1607,10 +1649,11 @@ export default function WarehouseGiacenze() {
                       <button
                         type="button"
                         onClick={() => ddtPdfInputRef.current?.click()}
-                        className="flex h-20 w-full flex-col items-center justify-center rounded-md border border-dashed border-[var(--border)] bg-[var(--surface-soft)] px-3 text-center hover:bg-[var(--hover)] lg:h-full"
+                        className="flex h-20 w-full flex-col items-center justify-center rounded-md border border-dashed border-[var(--border)] bg-[var(--surface-soft)] px-3 text-center hover:bg-[var(--hover)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald-400/60 lg:h-full"
+                        aria-label="Carica documenti per registrazione DDT"
                       >
                         <i className="fa-solid fa-file-arrow-up text-lg text-[var(--muted)]" aria-hidden="true" />
-                        <span className="mt-1 text-[11px] font-semibold">Carica documenti</span>
+                        <span className={`mt-1 font-semibold ${compactCaricoLayout ? "text-[10px]" : "text-[11px]"}`}>Carica documenti</span>
                         {ddtUploadedFiles.length > 0 ? (
                           <span className="mt-1 text-[10px] text-[var(--muted)]">{ddtUploadedFiles.length} file</span>
                         ) : null}
@@ -1618,7 +1661,7 @@ export default function WarehouseGiacenze() {
 
                       <div className="min-w-0 overflow-hidden rounded-md border border-[var(--border)]">
                         <div className="h-full overflow-y-auto overflow-x-hidden pr-1">
-                          <table className="w-full table-fixed text-[11px]">
+                          <table className={`w-full table-fixed ${compactCaricoLayout ? "text-[10px]" : "text-[11px]"}`}>
                             <tbody>
                               {ddtUploadedFiles.map((row) => (
                                 <tr key={row.id} className="border-t border-[var(--border)] first:border-t-0">
@@ -1631,7 +1674,8 @@ export default function WarehouseGiacenze() {
                                     <select
                                       value={row.docType}
                                       onChange={(event) => handleDdtFileTypeChange(row.id, event.target.value)}
-                                      className="w-full rounded-md border border-[var(--border)] bg-[var(--surface)] px-2 py-1 text-[11px] outline-none"
+                                      className="w-full rounded-md border border-[var(--border)] bg-[var(--surface)] px-2 py-1 text-[11px] outline-none focus-visible:ring-2 focus-visible:ring-emerald-400/60"
+                                      aria-label={`Tipo documento per ${row.file.name}`}
                                     >
                                       {DDT_FILE_TYPES.map((type) => (
                                         <option key={type} value={type}>
@@ -1658,14 +1702,14 @@ export default function WarehouseGiacenze() {
                       type="button"
                       onClick={importDataFromDdt}
                       disabled={ddtImporting || !ddtUploadedFiles.some((row) => row.docType === "ddt")}
-                      className="mt-2 w-full rounded-md bg-emerald-500 px-3 py-2 text-xs font-semibold text-white hover:bg-emerald-600 disabled:cursor-not-allowed disabled:opacity-60 lg:mt-3 lg:py-1.5"
+                      className="mt-2 w-full rounded-md bg-emerald-500 px-3 py-2 text-xs font-semibold text-white hover:bg-emerald-600 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald-400/60 disabled:cursor-not-allowed disabled:opacity-60 lg:mt-3 lg:py-1.5"
                     >
                       {ddtImporting ? "Importazione in corso..." : "Importa dati da DDT"}
                     </button>
                   </div>
 
                   <div className="h-full rounded-lg border border-[var(--border)] bg-[var(--surface)] p-3 lg:col-span-3 lg:flex lg:flex-col lg:p-2.5">
-                    <p className="text-[11px] uppercase tracking-[0.2em] text-[var(--muted)]">Photo Upload / P/N OEM / Note</p>
+                    <p className={`${compactCaricoLayout ? "text-[10px]" : "text-[11px]"} uppercase tracking-[0.2em] text-[var(--muted)]`}>Photo Upload / P/N OEM / Note</p>
                     <input
                       ref={photoInputRef}
                       type="file"
@@ -1676,7 +1720,7 @@ export default function WarehouseGiacenze() {
                     <button
                       type="button"
                       onClick={() => photoInputRef.current?.click()}
-                      className="mt-2 flex h-16 w-full items-center justify-center rounded-md border border-dashed border-[var(--border)] bg-[var(--surface-soft)] text-xs font-semibold hover:bg-[var(--hover)] lg:h-10"
+                      className="mt-2 flex h-16 w-full items-center justify-center rounded-md border border-dashed border-[var(--border)] bg-[var(--surface-soft)] text-xs font-semibold hover:bg-[var(--hover)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald-400/60 lg:h-10"
                     >
                       {photoFile?.name || "Upload foto articolo"}
                     </button>
@@ -1684,7 +1728,7 @@ export default function WarehouseGiacenze() {
                       type="button"
                       onClick={scanLabelWithAi}
                       disabled={labelScanning || !photoFile}
-                      className="mt-2 w-full rounded-md border border-[var(--border)] px-3 py-2 text-xs font-semibold hover:bg-[var(--hover)] disabled:cursor-not-allowed disabled:opacity-60 lg:py-1.5"
+                      className="mt-2 w-full rounded-md border border-[var(--border)] px-3 py-2 text-xs font-semibold hover:bg-[var(--hover)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald-400/60 disabled:cursor-not-allowed disabled:opacity-60 lg:py-1.5"
                     >
                       {labelScanning ? "Scansione AI..." : "Scansiona etichetta (AI)"}
                     </button>
@@ -1694,7 +1738,7 @@ export default function WarehouseGiacenze() {
                         type="text"
                         value={oemPartNumber}
                         onChange={(event) => setOemPartNumber(event.target.value)}
-                        className="mt-1.5 w-full rounded-md border border-[var(--border)] bg-[var(--surface)] px-3 py-2 text-xs lg:py-1.5"
+                        className="mt-1.5 w-full rounded-md border border-[var(--border)] bg-[var(--surface)] px-3 py-2 text-xs focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald-400/60 lg:py-1.5"
                         placeholder="Inserisci part number OEM"
                       />
                     </label>
@@ -1704,23 +1748,23 @@ export default function WarehouseGiacenze() {
                         value={movementNotes}
                         onChange={(event) => setMovementNotes(event.target.value)}
                         rows={2}
-                        className="mt-1.5 h-16 w-full resize-none rounded-md border border-[var(--border)] bg-[var(--surface)] px-3 py-2 text-xs lg:h-10 lg:py-1.5"
+                        className="mt-1.5 h-16 w-full resize-none rounded-md border border-[var(--border)] bg-[var(--surface)] px-3 py-2 text-xs focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald-400/60 lg:h-10 lg:py-1.5"
                         placeholder="Inserisci note"
                       />
                     </label>
                   </div>
 
                   <div className="h-fit rounded-lg border border-[var(--border)] bg-[var(--surface)] p-3 lg:col-span-3 lg:p-2.5">
-                    <p className="text-[11px] uppercase tracking-[0.2em] text-[var(--muted)]">Costo di acquisto</p>
+                    <p className={`${compactCaricoLayout ? "text-[10px]" : "text-[11px]"} uppercase tracking-[0.2em] text-[var(--muted)]`}>Costo di acquisto</p>
                     <div className="mt-2 flex items-center rounded-md border border-[var(--border)] bg-[var(--surface)] px-3 py-2 lg:py-1.5">
-                      <span className="mr-3 text-sm text-[var(--muted)]">EUR</span>
+                      <span className={`mr-3 text-[var(--muted)] ${compactCaricoLayout ? "text-xs" : "text-sm"}`}>EUR</span>
                       <input
                         type="number"
                         min="0"
                         step="0.01"
                         value={purchaseCost}
                         onChange={(event) => setPurchaseCost(event.target.value)}
-                        className="w-full bg-transparent text-xl font-semibold leading-none outline-none lg:text-[28px]"
+                        className={`w-full bg-transparent font-semibold leading-none outline-none focus-visible:ring-2 focus-visible:ring-emerald-400/60 ${compactCaricoLayout ? "text-lg lg:text-xl" : "text-xl lg:text-[28px]"}`}
                         placeholder="0,00"
                       />
                     </div>
@@ -1757,14 +1801,14 @@ export default function WarehouseGiacenze() {
 
       {newArticleOpen ? (
         <div
-          className="fixed inset-0 z-[70] flex items-center justify-center bg-black/60 px-4 py-8"
+          className="fixed inset-0 z-[70] flex items-start justify-center overflow-y-auto bg-black/85 px-3 py-3 sm:items-center sm:px-4 sm:py-8"
           onMouseDown={() => setNewArticleOpen(false)}
         >
           <div
-            className="w-full max-w-4xl rounded-xl border border-[var(--border)] bg-[var(--surface)] p-6 shadow-xl"
+            className="my-auto flex w-full max-w-4xl max-h-[calc(100dvh-1.5rem)] flex-col overflow-hidden rounded-xl border border-[var(--border)] bg-[var(--surface)] shadow-xl sm:max-h-[calc(100dvh-4rem)]"
             onMouseDown={(event) => event.stopPropagation()}
           >
-            <div className="flex items-start justify-between gap-4">
+            <div className="flex items-start justify-between gap-4 px-4 pt-4 sm:px-6 sm:pt-6">
               <div>
                 <p className="text-xs uppercase tracking-[0.2em] text-[var(--muted)]">Nuovo articolo</p>
                 <h2 className="mt-1 text-xl font-semibold">Anagrafica articolo</h2>
@@ -1779,7 +1823,8 @@ export default function WarehouseGiacenze() {
               </button>
             </div>
 
-            <div className="mt-4 grid gap-4 lg:grid-cols-2">
+            <div className="mt-4 min-h-0 flex-1 overflow-y-auto px-4 sm:px-6">
+              <div className="grid gap-4 lg:grid-cols-2">
               <label className="text-sm lg:col-span-2">
                 <span className="text-xs uppercase tracking-[0.2em] text-[var(--muted)]">Descrizione</span>
                 <input
@@ -1894,8 +1939,9 @@ export default function WarehouseGiacenze() {
                 </label>
               </div>
             </div>
+            </div>
 
-            <div className="mt-6 flex items-center justify-end gap-2">
+            <div className="mt-4 flex shrink-0 items-center justify-end gap-2 border-t border-[var(--border)] px-4 py-3 sm:px-6 sm:py-4">
               <button
                 type="button"
                 className="rounded-md border border-[var(--border)] px-4 py-2 text-sm"
