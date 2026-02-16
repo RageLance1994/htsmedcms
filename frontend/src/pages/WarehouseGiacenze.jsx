@@ -15,6 +15,13 @@ const getLocalDateTimeValue = () => {
   return local.toISOString().slice(0, 16);
 };
 
+const MEASUREMENT_UNITS = ["QT", "KG", "METRI", "LITRI"];
+
+const normalizeUnit = (value) => {
+  const next = String(value || "").trim().toUpperCase();
+  return MEASUREMENT_UNITS.includes(next) ? next : "QT";
+};
+
 export default function WarehouseGiacenze() {
   const [items, setItems] = useState([]);
   const [page, setPage] = useState(1);
@@ -64,6 +71,11 @@ export default function WarehouseGiacenze() {
   const [oemPartNumber, setOemPartNumber] = useState("");
   const [movementNotes, setMovementNotes] = useState("");
   const [purchaseCost, setPurchaseCost] = useState("");
+  const [desktopExtraCardsCollapsed, setDesktopExtraCardsCollapsed] = useState(false);
+  const [ddtImporting, setDdtImporting] = useState(false);
+  const [labelScanning, setLabelScanning] = useState(false);
+  const [aiAssistError, setAiAssistError] = useState("");
+  const [aiAssistInfo, setAiAssistInfo] = useState("");
   const [caricoSaving, setCaricoSaving] = useState(false);
   const [caricoError, setCaricoError] = useState("");
   const [newArticleOpen, setNewArticleOpen] = useState(false);
@@ -211,7 +223,7 @@ export default function WarehouseGiacenze() {
 
   useEffect(() => {
     if (selectedArticle?.unitaMisura) {
-      setEntryUnit(selectedArticle.unitaMisura);
+      setEntryUnit(normalizeUnit(selectedArticle.unitaMisura));
     } else {
       setEntryUnit("QT");
     }
@@ -344,13 +356,33 @@ export default function WarehouseGiacenze() {
   const addMovementItem = () => {
     if (!selectedArticle) return;
     const qty = Math.max(parseInt(entryQty, 10) || 1, 1);
-    const unit = String(entryUnit || selectedArticle?.unitaMisura || "QT").trim() || "QT";
+    const unit = normalizeUnit(entryUnit || selectedArticle?.unitaMisura || "QT");
     const nextId = `${selectedArticle.codiceArticolo}-${Date.now()}`;
     setMovementItems((prev) => [
       ...prev,
       {
         id: nextId,
         articolo: selectedArticle,
+        quantita: qty,
+        unitaMisura: unit,
+        seriali: [],
+        note: ""
+      }
+    ]);
+    setSelectedMovementItemId(nextId);
+  };
+
+  const addMovementItemFromArticle = (article) => {
+    if (!article) return;
+    setSelectedArticle(article);
+    const qty = 1;
+    const unit = normalizeUnit(article?.unitaMisura || entryUnit || "QT");
+    const nextId = `${article.codiceArticolo}-${Date.now()}`;
+    setMovementItems((prev) => [
+      ...prev,
+      {
+        id: nextId,
+        articolo: article,
         quantita: qty,
         unitaMisura: unit,
         seriali: [],
@@ -368,6 +400,119 @@ export default function WarehouseGiacenze() {
   const removeSelectedMovementItem = () => {
     if (!selectedMovementItemId) return;
     removeMovementItemById(selectedMovementItemId);
+  };
+
+  const importDataFromDdt = async () => {
+    if (!ddtPdfFile) {
+      setAiAssistError("Seleziona prima un PDF DDT.");
+      setAiAssistInfo("");
+      return;
+    }
+    setDdtImporting(true);
+    setAiAssistError("");
+    setAiAssistInfo("");
+    try {
+      const formData = new FormData();
+      formData.append("ddtPdf", ddtPdfFile);
+      formData.append("ddtCode", ddtCode || "");
+      if (selectedSupplier?.cod) {
+        formData.append("supplierCode", String(selectedSupplier.cod));
+      }
+      const res = await fetch(`${API_BASE}/api/warehouse/ddt/import`, {
+        method: "POST",
+        body: formData
+      });
+      if (!res.ok) {
+        const payload = await res.json().catch(() => ({}));
+        throw new Error(payload?.errore || "Importazione DDT non riuscita");
+      }
+      const payload = await res.json();
+      if (payload?.ddtCode) {
+        setDdtCode(String(payload.ddtCode));
+      }
+      const importedItems = Array.isArray(payload?.items) ? payload.items : [];
+      if (importedItems.length > 0) {
+        const mapped = importedItems.map((row, index) => {
+          const code = String(row?.codiceArticolo || row?.codice || "").trim();
+          const qty = Math.max(parseInt(row?.quantita, 10) || 1, 1);
+          const detectedUnit = normalizeUnit(row?.unitaMisura || row?.um || "QT");
+          const linkedArticle = articles.find((item) => String(item.codiceArticolo || "").trim() === code);
+          return {
+            id: `${code || "ART"}-IMP-${Date.now()}-${index}`,
+            articolo:
+              linkedArticle ||
+              {
+                codiceArticolo: code || "N/D",
+                descrizione: String(row?.descrizione || row?.descrizioneArticolo || "Articolo da DDT"),
+                unitaMisura: detectedUnit
+              },
+            quantita: qty,
+            unitaMisura: detectedUnit,
+            seriali: [],
+            note: String(row?.note || "")
+          };
+        });
+        setMovementItems((prev) => [...prev, ...mapped]);
+        setSelectedMovementItemId(mapped[mapped.length - 1].id);
+      }
+      setAiAssistInfo(`Import DDT completato: ${importedItems.length} righe riconosciute.`);
+    } catch (err) {
+      setAiAssistError(err.message || "Errore import DDT");
+    } finally {
+      setDdtImporting(false);
+    }
+  };
+
+  const scanLabelWithAi = async () => {
+    if (!photoFile) {
+      setAiAssistError("Carica una foto etichetta prima della scansione.");
+      setAiAssistInfo("");
+      return;
+    }
+    setLabelScanning(true);
+    setAiAssistError("");
+    setAiAssistInfo("");
+    try {
+      const formData = new FormData();
+      formData.append("labelImage", photoFile);
+      const res = await fetch(`${API_BASE}/api/warehouse/ai/scan-label`, {
+        method: "POST",
+        body: formData
+      });
+      if (!res.ok) {
+        const payload = await res.json().catch(() => ({}));
+        throw new Error(payload?.errore || "Scansione etichetta non riuscita");
+      }
+      const payload = await res.json();
+      const detectedCode = String(payload?.article?.codiceArticolo || payload?.articleCode || "").trim();
+      const detectedDescription = String(payload?.article?.descrizione || payload?.description || "").trim();
+      const detectedUnit = normalizeUnit(payload?.article?.unitaMisura || payload?.unit || entryUnit);
+      const foundArticle = articles.find((row) => {
+        const code = String(row.codiceArticolo || "").trim();
+        const desc = String(row.descrizione || "").trim().toLowerCase();
+        return (detectedCode && code === detectedCode) || (detectedDescription && desc === detectedDescription.toLowerCase());
+      });
+      if (foundArticle) {
+        setSelectedArticle(foundArticle);
+        setEntryUnit(normalizeUnit(foundArticle.unitaMisura || detectedUnit));
+      } else if (detectedCode || detectedDescription) {
+        setSelectedArticle({
+          codiceArticolo: detectedCode || "N/D",
+          descrizione: detectedDescription || "Articolo rilevato da AI",
+          unitaMisura: detectedUnit
+        });
+        setEntryUnit(detectedUnit);
+      }
+      if (detectedCode || detectedDescription) {
+        setArticleSearch(detectedCode || detectedDescription);
+      }
+      const confidence = payload?.confidence ? ` (confidenza ${Math.round(Number(payload.confidence) * 100)}%)` : "";
+      setAiAssistInfo(`Etichetta riconosciuta${confidence}.`);
+    } catch (err) {
+      setAiAssistError(err.message || "Errore scansione AI");
+    } finally {
+      setLabelScanning(false);
+    }
   };
 
   const submitCarico = async () => {
@@ -401,7 +546,11 @@ export default function WarehouseGiacenze() {
   const fetchSuppliers = async (term = "") => {
     setSuppliersLoading(true);
     try {
-      const params = new URLSearchParams({ search: term, limit: term ? "200" : "50" });
+      const params = new URLSearchParams({
+        search: term,
+        tipo: "fornitori",
+        limit: term ? "500" : "1500"
+      });
       const res = await fetch(`${API_BASE}/api/warehouse/fornitori?${params.toString()}`);
       if (!res.ok) throw new Error("Errore caricamento fornitori");
       const payload = await res.json();
@@ -1081,9 +1230,9 @@ export default function WarehouseGiacenze() {
       ) : null}
 
       {caricoWizardOpen ? (
-        <div className="fixed inset-0 z-[60] bg-[var(--page-bg)] text-[var(--page-fg)]">
-          <div className="h-full p-4">
-            <div className="flex h-full flex-col rounded-lg border border-[var(--border)] bg-[var(--surface)]">
+        <div className="fixed inset-0 z-[60] overflow-hidden bg-[var(--page-bg)] text-[var(--page-fg)]">
+          <div className="h-full w-full overflow-hidden">
+            <div className="flex h-full w-full flex-col overflow-hidden bg-[var(--surface)]">
               <div className="relative border-b border-[var(--border)] px-4 py-3">
                 <div className="pr-12">
                   <h2 className="text-lg font-semibold">Carico Merce</h2>
@@ -1151,7 +1300,6 @@ export default function WarehouseGiacenze() {
                                   String(row.piva || "").toLowerCase().includes(term)
                                 );
                               })
-                              .slice(0, 30)
                               .map((row) => (
                                 <button
                                   key={row.cod}
@@ -1178,9 +1326,9 @@ export default function WarehouseGiacenze() {
                     <i className="fa-solid fa-arrow-right text-sm" aria-hidden="true" />
                   </div>
 
-                  <div className="relative min-w-0">
+                  <div className="relative min-w-0 w-full lg:w-auto">
                     <select
-                      className="h-11 w-full min-w-[260px] appearance-none rounded-md border border-[var(--border)] bg-[var(--surface)] px-3 pr-9 text-sm font-semibold"
+                      className="h-11 w-full appearance-none rounded-md border border-[var(--border)] bg-[var(--surface)] px-3 pr-9 text-sm font-semibold lg:min-w-[260px]"
                       value={selectedCausale?.cod ?? ""}
                       onChange={(event) => {
                         const value = Number(event.target.value);
@@ -1200,17 +1348,18 @@ export default function WarehouseGiacenze() {
                     </span>
                   </div>
 
-                  <div className="min-w-0">
+                  <div className="min-w-0 w-full lg:w-auto">
                     <input
                       type="datetime-local"
                       value={caricoDateTimeLocal}
                       onChange={(event) => setCaricoDateTimeLocal(event.target.value)}
-                      className="h-11 w-full min-w-[220px] rounded-md border border-[var(--border)] bg-[var(--surface)] px-3 text-sm"
+                      className="h-11 w-full rounded-md border border-[var(--border)] bg-[var(--surface)] px-3 text-sm lg:min-w-[220px]"
                     />
                   </div>
                 </div>
               </div>
-              <div className="flex min-h-0 flex-1 flex-col gap-4 p-4">
+              <div className="min-h-0 flex-1 overflow-y-auto overflow-x-hidden px-3 py-3 sm:px-4 sm:py-4">
+                <div className="flex min-h-0 flex-col gap-4 lg:h-full">
                 <section className="w-full rounded-lg border border-[var(--border)] bg-[var(--surface)] p-3">
                   <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-6">
                     <div className="min-w-0">
@@ -1238,166 +1387,184 @@ export default function WarehouseGiacenze() {
                   </div>
                 </section>
 
-                <section className="grid min-h-0 flex-1 gap-4 lg:grid-cols-[minmax(0,1fr)_auto_minmax(0,1fr)]">
-                  <div className="flex min-h-0 min-w-0 flex-col rounded-lg border border-[var(--border)] bg-[var(--surface)] p-4">
-                    <div className="flex items-center justify-between">
-                      <p className="text-xs uppercase tracking-[0.2em] text-[var(--muted)]">Archivio articoli</p>
-                      <button
-                        type="button"
-                        className="flex h-7 w-7 items-center justify-center rounded-md border border-[var(--border)] text-[var(--muted)] hover:bg-[var(--hover)]"
-                        aria-label="Nuovo articolo"
-                        onClick={() => setNewArticleOpen(true)}
-                      >
-                        <i className="fa-solid fa-plus text-[11px]" aria-hidden="true" />
-                      </button>
-                    </div>
-                    <div className="mt-2 flex items-center rounded-md border border-[var(--border)] bg-[var(--surface)] px-3 py-2">
-                      <i className="fa-solid fa-magnifying-glass text-[12px] text-[var(--muted)]" aria-hidden="true" />
-                      <input
-                        value={articleSearch}
-                        onChange={(event) => setArticleSearch(event.target.value)}
-                        placeholder="Cerca per codice o descrizione"
-                        className="ml-3 w-full bg-transparent text-sm outline-none"
-                      />
-                      {articlesLoading ? <span className="ml-2 text-xs text-[var(--muted)]">Caricamento...</span> : null}
-                    </div>
-                    <div className="mt-3 min-h-0 flex-1 overflow-auto rounded-md border border-[var(--border)]">
-                      <table className="min-w-[460px] w-full text-sm">
-                        <thead className="sticky top-0 z-10 bg-[var(--surface-strong)] text-[10px] uppercase tracking-[0.2em] text-[var(--muted)]">
-                          <tr className="text-left">
-                            <th className="px-3 py-2">Codice</th>
-                            <th className="px-3 py-2">Descrizione</th>
-                            <th className="px-3 py-2">U.M.</th>
-                          </tr>
-                        </thead>
-                        <tbody>
-                          {articles.map((row) => (
-                            <tr
-                              key={row.codiceArticolo}
-                              className={`border-t border-[var(--border)] ${
-                                selectedArticle?.codiceArticolo === row.codiceArticolo ? "bg-emerald-500/10" : ""
-                              }`}
-                              onClick={() => setSelectedArticle(row)}
-                            >
-                              <td className="px-3 py-2 font-semibold">{row.codiceArticolo}</td>
-                              <td className="px-3 py-2">{row.descrizione}</td>
-                              <td className="px-3 py-2">{row.unitaMisura || "-"}</td>
-                            </tr>
-                          ))}
-                          {!articlesLoading && articles.length === 0 ? (
-                            <tr>
-                              <td colSpan={3} className="px-3 py-6 text-center text-sm text-[var(--muted)]">
-                                Nessun articolo trovato.
-                              </td>
-                            </tr>
-                          ) : null}
-                        </tbody>
-                      </table>
-                    </div>
-                  </div>
-
-                  <div className="flex items-center justify-center">
-                    <div className="w-full max-w-sm rounded-lg border border-[var(--border)] bg-[var(--surface)] p-3 lg:w-[76px] lg:max-w-none">
-                      <label className="block text-xs">
-                        <span className="uppercase tracking-[0.2em] text-[var(--muted)]">U.M.</span>
-                        <input
-                          type="text"
-                          value={entryUnit}
-                          onChange={(event) => setEntryUnit(event.target.value)}
-                          className="mt-2 h-9 w-full rounded-md border border-[var(--border)] bg-[var(--surface)] px-2 text-center text-sm font-semibold"
-                        />
-                      </label>
-                      <div className="mt-2 flex flex-row justify-center gap-2 lg:flex-col">
+                <section className="w-full bg-[var(--surface)] p-0 xl:min-h-0 xl:flex-1">
+                  <div className="grid grid-cols-1 gap-2 sm:gap-3 xl:h-full xl:min-h-0 xl:grid-cols-2 xl:items-stretch">
+                    <div className="flex min-h-[300px] min-w-0 flex-col rounded-lg bg-[var(--surface)] p-3 sm:p-4 xl:min-h-0">
+                      <div className="flex items-center gap-2">
+                        <p className="text-xs uppercase tracking-[0.2em] text-[var(--muted)]">Archivio articoli</p>
                         <button
                           type="button"
-                          onClick={addMovementItem}
-                          disabled={!selectedArticle}
-                          className="flex h-9 w-9 items-center justify-center rounded-md border border-[var(--border)] text-[var(--muted)] transition hover:bg-[var(--hover)] disabled:cursor-not-allowed disabled:opacity-50"
-                          aria-label="Aggiungi riga movimento"
+                          className="flex h-7 w-7 items-center justify-center rounded-md border border-[var(--border)] text-[var(--muted)] hover:bg-[var(--hover)]"
+                          aria-label="Nuovo articolo"
+                          onClick={() => setNewArticleOpen(true)}
                         >
-                          <i className="fa-solid fa-arrow-down text-[12px] lg:hidden" aria-hidden="true" />
-                          <i className="fa-solid fa-arrow-right hidden text-[12px] lg:inline" aria-hidden="true" />
-                        </button>
-                        <button
-                          type="button"
-                          onClick={removeSelectedMovementItem}
-                          disabled={!selectedMovementItemId}
-                          className="flex h-9 w-9 items-center justify-center rounded-md border border-[var(--border)] text-[var(--muted)] transition hover:bg-[var(--hover)] disabled:cursor-not-allowed disabled:opacity-50"
-                          aria-label="Rimuovi riga movimento selezionata"
-                        >
-                          <i className="fa-solid fa-arrow-up text-[12px] lg:hidden" aria-hidden="true" />
-                          <i className="fa-solid fa-arrow-left hidden text-[12px] lg:inline" aria-hidden="true" />
+                          <i className="fa-solid fa-plus text-[11px]" aria-hidden="true" />
                         </button>
                       </div>
+                      <div className="mt-2 flex items-center rounded-md border border-[var(--border)] bg-[var(--surface)] px-3 py-2">
+                        <i className="fa-solid fa-magnifying-glass text-[12px] text-[var(--muted)]" aria-hidden="true" />
+                        <input
+                          value={articleSearch}
+                          onChange={(event) => setArticleSearch(event.target.value)}
+                          placeholder="Cerca per codice o descrizione"
+                          className="ml-3 w-full bg-transparent text-sm outline-none"
+                        />
+                        {articlesLoading ? <span className="ml-2 text-xs text-[var(--muted)]">Caricamento...</span> : null}
+                      </div>
+                      <div className="mt-3 h-[42vh] min-h-[240px] max-h-[380px] overflow-auto rounded-md border border-[var(--border)] xl:min-h-0 xl:h-auto xl:max-h-none xl:flex-1">
+                        <table className="min-w-[460px] w-full text-sm">
+                          <thead className="sticky top-0 z-10 bg-[var(--surface-strong)] text-[10px] uppercase tracking-[0.2em] text-[var(--muted)]">
+                            <tr className="text-left">
+                              <th className="px-3 py-2">Codice</th>
+                              <th className="px-3 py-2">Descrizione</th>
+                              <th className="px-3 py-2">U.M.</th>
+                              <th className="px-2 py-2"></th>
+                            </tr>
+                          </thead>
+                          <tbody>
+                            {articles.map((row) => (
+                              <tr
+                                key={row.codiceArticolo}
+                                className={`group border-t border-[var(--border)] ${
+                                  selectedArticle?.codiceArticolo === row.codiceArticolo ? "bg-emerald-500/10" : ""
+                                }`}
+                                onClick={() => setSelectedArticle(row)}
+                              >
+                                <td className="px-3 py-2 font-semibold">{row.codiceArticolo}</td>
+                                <td className="px-3 py-2">{row.descrizione}</td>
+                                <td className="px-3 py-2">{row.unitaMisura || "-"}</td>
+                                <td className="px-2 py-2 text-right">
+                                  <button
+                                    type="button"
+                                    className="h-7 w-7 rounded-md border border-[var(--border)] text-[var(--muted)] opacity-100 transition hover:bg-[var(--hover)] sm:opacity-0 sm:group-hover:opacity-100 sm:focus:opacity-100"
+                                    aria-label="Aggiungi riga movimento"
+                                    onClick={(event) => {
+                                      event.stopPropagation();
+                                      addMovementItemFromArticle(row);
+                                    }}
+                                  >
+                                    <i className="fa-solid fa-arrow-down text-[11px] sm:hidden" aria-hidden="true" />
+                                    <i className="fa-solid fa-arrow-right hidden text-[11px] sm:inline-block" aria-hidden="true" />
+                                  </button>
+                                </td>
+                              </tr>
+                            ))}
+                            {!articlesLoading && articles.length === 0 ? (
+                              <tr>
+                                <td colSpan={4} className="px-3 py-6 text-center text-sm text-[var(--muted)]">
+                                  Nessun articolo trovato.
+                                </td>
+                              </tr>
+                            ) : null}
+                          </tbody>
+                        </table>
+                      </div>
                     </div>
-                  </div>
 
-                  <div className="flex min-h-0 min-w-0 flex-col rounded-lg border border-[var(--border)] bg-[var(--surface)] p-4">
-                    <div className="flex items-center justify-between">
-                      <p className="text-xs uppercase tracking-[0.2em] text-[var(--muted)]">Righe movimento</p>
-                      <span className="text-xs text-[var(--muted)]">{movementItems.length} righe</span>
-                    </div>
-                    <div className="mt-3 min-h-0 flex-1 overflow-auto rounded-md border border-[var(--border)]">
-                      <table className="min-w-[520px] w-full text-sm">
-                        <thead className="sticky top-0 bg-[var(--surface-strong)] text-[10px] uppercase tracking-[0.2em] text-[var(--muted)]">
-                          <tr className="text-left">
-                            <th className="px-3 py-2">Articolo</th>
-                            <th className="px-3 py-2">Qt</th>
-                            <th className="px-3 py-2">U.M.</th>
-                            <th className="px-3 py-2">Note</th>
-                            <th className="px-3 py-2"></th>
-                          </tr>
-                        </thead>
-                        <tbody>
-                          {movementItems.map((row) => (
-                            <tr
-                              key={row.id}
-                              className={`cursor-pointer border-t border-[var(--border)] ${
-                                selectedMovementItemId === row.id ? "bg-emerald-500/10" : ""
-                              }`}
-                              onClick={() => setSelectedMovementItemId(row.id)}
-                            >
-                              <td className="px-3 py-2">{row.articolo?.descrizione || row.articolo?.codiceArticolo}</td>
-                              <td className="px-3 py-2">{row.quantita}</td>
-                              <td className="px-3 py-2">{row.unitaMisura || "-"}</td>
-                              <td className="px-3 py-2 text-[var(--muted)]">{row.note || "-"}</td>
-                              <td className="px-3 py-2 text-right">
-                                <button
-                                  type="button"
-                                  className="rounded-md border border-[var(--border)] px-2 py-1 text-xs text-[var(--muted)] hover:bg-[var(--hover)]"
-                                  onClick={(event) => {
-                                    event.stopPropagation();
-                                    removeMovementItemById(row.id);
-                                  }}
-                                >
-                                  Rimuovi
-                                </button>
-                              </td>
+                    <div className="flex min-h-[300px] min-w-0 flex-col rounded-lg bg-[var(--surface)] p-3 sm:p-4 xl:min-h-0">
+                      <div className="flex items-center justify-between">
+                        <p className="text-xs uppercase tracking-[0.2em] text-[var(--muted)]">Righe movimento</p>
+                        <span className="text-xs text-[var(--muted)]">{movementItems.length} righe</span>
+                      </div>
+                      <div className="mt-2 flex items-center rounded-md border border-[var(--border)] bg-[var(--surface)] px-3 py-2 opacity-70">
+                        <i className="fa-solid fa-magnifying-glass text-[12px] text-[var(--muted)]" aria-hidden="true" />
+                        <input
+                          value=""
+                          readOnly
+                          tabIndex={-1}
+                          placeholder="Filtro righe movimento"
+                          className="ml-3 w-full cursor-default bg-transparent text-sm outline-none"
+                        />
+                      </div>
+                      <div className="mt-3 h-[42vh] min-h-[240px] max-h-[380px] overflow-auto rounded-md border border-[var(--border)] xl:min-h-0 xl:h-auto xl:max-h-none xl:flex-1">
+                        <table className="min-w-[520px] w-full text-sm">
+                          <thead className="sticky top-0 bg-[var(--surface-strong)] text-[10px] uppercase tracking-[0.2em] text-[var(--muted)]">
+                            <tr className="text-left">
+                              <th className="px-2 py-2"></th>
+                              <th className="px-3 py-2">Articolo</th>
+                              <th className="px-3 py-2">Qt</th>
+                              <th className="px-3 py-2">U.M.</th>
+                              <th className="px-3 py-2">Note</th>
                             </tr>
-                          ))}
-                          {movementItems.length === 0 ? (
-                            <tr>
-                              <td colSpan={5} className="px-3 py-4 text-center text-sm text-[var(--muted)]">
-                                Nessuna riga inserita.
-                              </td>
-                            </tr>
-                          ) : null}
-                        </tbody>
-                      </table>
+                          </thead>
+                          <tbody>
+                            {movementItems.map((row) => (
+                              <tr
+                                key={row.id}
+                                className={`group cursor-pointer border-t border-[var(--border)] ${
+                                  selectedMovementItemId === row.id ? "bg-emerald-500/10" : ""
+                                }`}
+                                onClick={() => setSelectedMovementItemId(row.id)}
+                              >
+                                <td className="px-2 py-2">
+                                  <button
+                                    type="button"
+                                    className="h-7 w-7 rounded-md border border-[var(--border)] text-[var(--muted)] opacity-100 transition hover:bg-[var(--hover)] sm:opacity-0 sm:group-hover:opacity-100 sm:focus:opacity-100"
+                                    aria-label="Rimuovi riga movimento"
+                                    onClick={(event) => {
+                                      event.stopPropagation();
+                                      removeMovementItemById(row.id);
+                                    }}
+                                  >
+                                    <i className="fa-solid fa-arrow-up text-[11px] sm:hidden" aria-hidden="true" />
+                                    <i className="fa-solid fa-arrow-left hidden text-[11px] sm:inline-block" aria-hidden="true" />
+                                  </button>
+                                </td>
+                                <td className="px-3 py-2">{row.articolo?.descrizione || row.articolo?.codiceArticolo}</td>
+                                <td className="px-3 py-2">{row.quantita}</td>
+                                <td className="px-3 py-2">{row.unitaMisura || "-"}</td>
+                                <td className="px-3 py-2 text-[var(--muted)]">{row.note || "-"}</td>
+                              </tr>
+                            ))}
+                            {movementItems.length === 0 ? (
+                              <tr>
+                                <td colSpan={5} className="px-3 py-4 text-center text-sm text-[var(--muted)]">
+                                  Nessuna riga inserita.
+                                </td>
+                              </tr>
+                            ) : null}
+                          </tbody>
+                        </table>
+                      </div>
                     </div>
                   </div>
                 </section>
 
-                <section className="grid gap-4 lg:grid-cols-3">
-                  <div className="rounded-lg border border-[var(--border)] bg-[var(--surface)] p-4">
+                <div className="relative hidden lg:block lg:py-1">
+                  <div className="h-[2px] w-full bg-[var(--border)]" />
+                  <button
+                    type="button"
+                    title={desktopExtraCardsCollapsed ? "ESPANDI dettagli" : "COMPRIMI dettagli"}
+                    onClick={() => setDesktopExtraCardsCollapsed((prev) => !prev)}
+                    className="absolute left-1/2 top-1/2 inline-flex h-6 min-w-[44px] -translate-x-1/2 -translate-y-1/2 items-center justify-center rounded-full border border-[var(--border)] bg-[var(--surface)] px-3 text-[var(--muted)] hover:bg-[var(--hover)]"
+                    aria-expanded={!desktopExtraCardsCollapsed}
+                    aria-controls="carico-extra-cards"
+                  >
+                    <i
+                      className={`fa-solid text-[11px] ${desktopExtraCardsCollapsed ? "fa-caret-down" : "fa-caret-up"}`}
+                      aria-hidden="true"
+                    />
+                  </button>
+                </div>
+
+                <div
+                  className={`max-h-none overflow-visible opacity-100 lg:overflow-hidden lg:transition-[max-height,opacity] lg:duration-300 lg:ease-out ${
+                    desktopExtraCardsCollapsed ? "lg:max-h-0 lg:opacity-0" : "lg:max-h-[520px] lg:opacity-100"
+                  }`}
+                >
+                <section
+                  id="carico-extra-cards"
+                  className="grid items-start gap-3 lg:grid-cols-12 lg:gap-4 2xl:mx-auto 2xl:w-full 2xl:max-w-[1680px]"
+                >
+                  <div className="h-fit rounded-lg border border-[var(--border)] bg-[var(--surface)] p-3 lg:col-span-4 lg:p-2.5">
                     <p className="text-xs uppercase tracking-[0.2em] text-[var(--muted)]">Registrazione DDT</p>
-                    <label className="mt-3 block text-sm">
+                    <label className="mt-2 block text-sm lg:mt-1.5">
                       <span className="text-xs uppercase tracking-[0.2em] text-[var(--muted)]">Codice</span>
                       <input
                         type="text"
                         value={ddtCode}
                         onChange={(event) => setDdtCode(event.target.value)}
-                        className="mt-2 w-full rounded-md border border-[var(--border)] bg-[var(--surface)] px-3 py-2 text-sm"
+                        className="mt-1.5 w-full rounded-md border border-[var(--border)] bg-[var(--surface)] px-3 py-2 text-sm lg:py-1.5"
                         placeholder="Inserisci codice DDT"
                       />
                     </label>
@@ -1411,15 +1578,22 @@ export default function WarehouseGiacenze() {
                     <button
                       type="button"
                       onClick={() => ddtPdfInputRef.current?.click()}
-                      className="mt-3 flex h-28 w-full flex-col items-center justify-center rounded-md border border-dashed border-[var(--border)] bg-[var(--surface-soft)] px-3 text-center hover:bg-[var(--hover)]"
+                      className="mt-2 flex h-20 w-full flex-col items-center justify-center rounded-md border border-dashed border-[var(--border)] bg-[var(--surface-soft)] px-3 text-center hover:bg-[var(--hover)] lg:h-12"
                     >
                       <i className="fa-solid fa-file-pdf text-lg text-[var(--muted)]" aria-hidden="true" />
-                      <span className="mt-2 text-sm font-semibold">{ddtPdfFile?.name || "Dropzone PDF / click upload"}</span>
-                      <span className="mt-1 text-xs text-[var(--muted)]">Solo file PDF</span>
+                      <span className="mt-1 text-sm font-semibold"></span>
+                    </button>
+                    <button
+                      type="button"
+                      onClick={importDataFromDdt}
+                      disabled={ddtImporting || !ddtPdfFile}
+                      className="mt-2 w-full rounded-md bg-emerald-500 px-3 py-2 text-sm font-semibold text-white hover:bg-emerald-600 disabled:cursor-not-allowed disabled:opacity-60 lg:py-1.5"
+                    >
+                      {ddtImporting ? "Importazione in corso..." : "Importa dati da DDT"}
                     </button>
                   </div>
 
-                  <div className="rounded-lg border border-[var(--border)] bg-[var(--surface)] p-4">
+                  <div className="h-fit rounded-lg border border-[var(--border)] bg-[var(--surface)] p-3 lg:col-span-5 lg:p-2.5">
                     <p className="text-xs uppercase tracking-[0.2em] text-[var(--muted)]">Photo Upload / P/N OEM / Note</p>
                     <input
                       ref={photoInputRef}
@@ -1431,35 +1605,43 @@ export default function WarehouseGiacenze() {
                     <button
                       type="button"
                       onClick={() => photoInputRef.current?.click()}
-                      className="mt-3 flex h-20 w-full items-center justify-center rounded-md border border-dashed border-[var(--border)] bg-[var(--surface-soft)] text-sm font-semibold hover:bg-[var(--hover)]"
+                      className="mt-2 flex h-16 w-full items-center justify-center rounded-md border border-dashed border-[var(--border)] bg-[var(--surface-soft)] text-sm font-semibold hover:bg-[var(--hover)] lg:h-10"
                     >
                       {photoFile?.name || "Upload foto articolo"}
                     </button>
-                    <label className="mt-3 block text-sm">
+                    <button
+                      type="button"
+                      onClick={scanLabelWithAi}
+                      disabled={labelScanning || !photoFile}
+                      className="mt-2 w-full rounded-md border border-[var(--border)] px-3 py-2 text-sm font-semibold hover:bg-[var(--hover)] disabled:cursor-not-allowed disabled:opacity-60 lg:py-1.5"
+                    >
+                      {labelScanning ? "Scansione AI..." : "Scansiona etichetta (AI)"}
+                    </button>
+                    <label className="mt-2 block text-sm lg:mt-1.5">
                       <span className="text-xs uppercase tracking-[0.2em] text-[var(--muted)]">P/N OEM</span>
                       <input
                         type="text"
                         value={oemPartNumber}
                         onChange={(event) => setOemPartNumber(event.target.value)}
-                        className="mt-2 w-full rounded-md border border-[var(--border)] bg-[var(--surface)] px-3 py-2 text-sm"
+                        className="mt-1.5 w-full rounded-md border border-[var(--border)] bg-[var(--surface)] px-3 py-2 text-sm lg:py-1.5"
                         placeholder="Inserisci part number OEM"
                       />
                     </label>
-                    <label className="mt-3 block text-sm">
+                    <label className="mt-2 block text-sm lg:mt-1.5">
                       <span className="text-xs uppercase tracking-[0.2em] text-[var(--muted)]">Note</span>
                       <textarea
                         value={movementNotes}
                         onChange={(event) => setMovementNotes(event.target.value)}
-                        rows={3}
-                        className="mt-2 w-full resize-none rounded-md border border-[var(--border)] bg-[var(--surface)] px-3 py-2 text-sm"
+                        rows={2}
+                        className="mt-1.5 h-16 w-full resize-none rounded-md border border-[var(--border)] bg-[var(--surface)] px-3 py-2 text-sm lg:h-10 lg:py-1.5"
                         placeholder="Inserisci note"
                       />
                     </label>
                   </div>
 
-                  <div className="rounded-lg border border-[var(--border)] bg-[var(--surface)] p-4">
+                  <div className="h-fit rounded-lg border border-[var(--border)] bg-[var(--surface)] p-3 lg:col-span-3 lg:p-2.5">
                     <p className="text-xs uppercase tracking-[0.2em] text-[var(--muted)]">Costo di acquisto</p>
-                    <div className="mt-4 flex items-center rounded-md border border-[var(--border)] bg-[var(--surface)] px-4 py-4">
+                    <div className="mt-2 flex items-center rounded-md border border-[var(--border)] bg-[var(--surface)] px-3 py-2 lg:py-1.5">
                       <span className="mr-3 text-lg text-[var(--muted)]">EUR</span>
                       <input
                         type="number"
@@ -1467,12 +1649,17 @@ export default function WarehouseGiacenze() {
                         step="0.01"
                         value={purchaseCost}
                         onChange={(event) => setPurchaseCost(event.target.value)}
-                        className="w-full bg-transparent text-4xl font-semibold leading-none outline-none"
+                        className="w-full bg-transparent text-2xl font-semibold leading-none outline-none lg:text-[34px]"
                         placeholder="0,00"
                       />
                     </div>
                   </div>
                 </section>
+                </div>
+
+                {aiAssistError ? <p className="text-sm text-rose-500">{aiAssistError}</p> : null}
+                {aiAssistInfo ? <p className="text-sm text-emerald-500">{aiAssistInfo}</p> : null}
+                </div>
               </div>
             </div>
           </div>

@@ -233,16 +233,22 @@ router.get("/fornitori", async (req, res) => {
   try {
     const db = getWarehouseDb();
     const search = String(req.query.search || "").trim();
-    const limit = Math.min(Math.max(parseInt(req.query.limit || "200", 10), 10), 2000);
+    const tipo = String(req.query.tipo || "fornitori").toLowerCase();
+    const limit = Math.min(Math.max(parseInt(req.query.limit || "500", 10), 10), 5000);
 
     const match = {};
+    if (tipo === "fornitori") {
+      match.Tipo = /FORNITORE/i;
+    } else if (tipo === "clienti") {
+      match.Tipo = /CLIENTE/i;
+    }
     if (search) {
       const re = new RegExp(search.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"), "i");
       match.$or = [{ Nominativo: re }, { PIVA: re }];
     }
 
     const rows = await db
-      .collection("Anagrafica")
+      .collection("Cli_For")
       .find(match, { projection: { _id: 0 } })
       .sort({ Nominativo: 1 })
       .limit(limit)
@@ -251,15 +257,16 @@ router.get("/fornitori", async (req, res) => {
     const data = rows.map((row) => ({
       cod: row.COD,
       nominativo: row.Nominativo || "",
+      tipo: row.Tipo || "",
       piva: row.PIVA || "",
       indirizzo: row.Indirizzo || "",
       citta: row.Citta || "",
       cap: row.CAP || "",
-      note: row.note || "",
+      note: row.Note || "",
       agenziaRiferimento: row["Agenzia di Riferimento"] || row["Agenzia di riferimento"] || row["Agenzia Riferimento"] || ""
     }));
 
-    res.json({ data });
+    res.json({ tipo, data });
   } catch (error) {
     res.status(500).json({ errore: "Errore caricamento fornitori", dettaglio: error.message });
   }
