@@ -22,6 +22,8 @@ const normalizeUnit = (value) => {
   return MEASUREMENT_UNITS.includes(next) ? next : "QT";
 };
 
+const DDT_FILE_TYPES = ["ddt", "fattura del vettore", "fattura d'aquisto", "immagine prodotto"];
+
 export default function WarehouseGiacenze() {
   const [items, setItems] = useState([]);
   const [page, setPage] = useState(1);
@@ -67,6 +69,7 @@ export default function WarehouseGiacenze() {
   const [selectedMovementItemId, setSelectedMovementItemId] = useState(null);
   const [ddtCode, setDdtCode] = useState("");
   const [ddtPdfFile, setDdtPdfFile] = useState(null);
+  const [ddtUploadedFiles, setDdtUploadedFiles] = useState([]);
   const [photoFile, setPhotoFile] = useState(null);
   const [oemPartNumber, setOemPartNumber] = useState("");
   const [movementNotes, setMovementNotes] = useState("");
@@ -402,9 +405,29 @@ export default function WarehouseGiacenze() {
     removeMovementItemById(selectedMovementItemId);
   };
 
+  const handleDdtFileSelection = (event) => {
+    const incomingFiles = Array.from(event.target.files || []);
+    if (incomingFiles.length === 0) return;
+    const rows = incomingFiles.map((file, idx) => ({
+      id: `${file.name}-${file.size}-${file.lastModified}-${Date.now()}-${idx}`,
+      file,
+      docType: "ddt"
+    }));
+    setDdtUploadedFiles((prev) => [...prev, ...rows]);
+    setDdtPdfFile(incomingFiles[incomingFiles.length - 1]);
+    event.target.value = "";
+  };
+
+  const handleDdtFileTypeChange = (id, nextType) => {
+    setDdtUploadedFiles((prev) =>
+      prev.map((row) => (row.id === id ? { ...row, docType: String(nextType || "").toLowerCase() } : row))
+    );
+  };
+
   const importDataFromDdt = async () => {
-    if (!ddtPdfFile) {
-      setAiAssistError("Seleziona prima un PDF DDT.");
+    const selectedDdtFile = ddtUploadedFiles.find((row) => row.docType === "ddt")?.file || ddtPdfFile;
+    if (!selectedDdtFile) {
+      setAiAssistError("Carica almeno un file e impostalo come DDT.");
       setAiAssistInfo("");
       return;
     }
@@ -413,7 +436,7 @@ export default function WarehouseGiacenze() {
     setAiAssistInfo("");
     try {
       const formData = new FormData();
-      formData.append("ddtPdf", ddtPdfFile);
+      formData.append("ddtPdf", selectedDdtFile);
       formData.append("ddtCode", ddtCode || "");
       if (selectedSupplier?.cod) {
         formData.append("supplierCode", String(selectedSupplier.cod));
@@ -1412,8 +1435,8 @@ export default function WarehouseGiacenze() {
                         {articlesLoading ? <span className="ml-2 text-xs text-[var(--muted)]">Caricamento...</span> : null}
                       </div>
                       <div className="mt-3 h-[42vh] min-h-[240px] max-h-[380px] overflow-auto rounded-md border border-[var(--border)] xl:min-h-0 xl:h-auto xl:max-h-none xl:flex-1">
-                        <table className="min-w-[460px] w-full text-sm">
-                          <thead className="sticky top-0 z-10 bg-[var(--surface-strong)] text-[10px] uppercase tracking-[0.2em] text-[var(--muted)]">
+                        <table className="min-w-[460px] w-full text-xs">
+                          <thead className="sticky top-0 z-10 bg-[var(--surface-strong)] text-[9px] uppercase tracking-[0.2em] text-[var(--muted)]">
                             <tr className="text-left">
                               <th className="px-3 py-2">Codice</th>
                               <th className="px-3 py-2">Descrizione</th>
@@ -1430,9 +1453,9 @@ export default function WarehouseGiacenze() {
                                 }`}
                                 onClick={() => setSelectedArticle(row)}
                               >
-                                <td className="px-3 py-2 font-semibold">{row.codiceArticolo}</td>
-                                <td className="px-3 py-2">{row.descrizione}</td>
-                                <td className="px-3 py-2">{row.unitaMisura || "-"}</td>
+                                <td className="px-3 py-2 font-semibold text-[12px]">{row.codiceArticolo}</td>
+                                <td className="px-3 py-2 text-[12px]">{row.descrizione}</td>
+                                <td className="px-3 py-2 text-[12px]">{row.unitaMisura || "-"}</td>
                                 <td className="px-2 py-2 text-right">
                                   <button
                                     type="button"
@@ -1451,7 +1474,7 @@ export default function WarehouseGiacenze() {
                             ))}
                             {!articlesLoading && articles.length === 0 ? (
                               <tr>
-                                <td colSpan={4} className="px-3 py-6 text-center text-sm text-[var(--muted)]">
+                                <td colSpan={4} className="px-3 py-6 text-center text-xs text-[var(--muted)]">
                                   Nessun articolo trovato.
                                 </td>
                               </tr>
@@ -1477,13 +1500,14 @@ export default function WarehouseGiacenze() {
                         />
                       </div>
                       <div className="mt-3 h-[42vh] min-h-[240px] max-h-[380px] overflow-auto rounded-md border border-[var(--border)] xl:min-h-0 xl:h-auto xl:max-h-none xl:flex-1">
-                        <table className="min-w-[520px] w-full text-sm">
-                          <thead className="sticky top-0 bg-[var(--surface-strong)] text-[10px] uppercase tracking-[0.2em] text-[var(--muted)]">
+                        <table className="min-w-[760px] w-full text-xs">
+                          <thead className="sticky top-0 bg-[var(--surface-strong)] text-[9px] uppercase tracking-[0.2em] text-[var(--muted)]">
                             <tr className="text-left">
-                              <th className="px-2 py-2"></th>
-                              <th className="px-3 py-2">Articolo</th>
-                              <th className="px-3 py-2">Qt</th>
-                              <th className="px-3 py-2">U.M.</th>
+                              <th className="px-3 py-2">Codice articolo</th>
+                              <th className="px-3 py-2">Seriale</th>
+                              <th className="px-3 py-2">Scaffale</th>
+                              <th className="px-3 py-2">Riga</th>
+                              <th className="px-3 py-2">Colonna</th>
                               <th className="px-3 py-2">Note</th>
                             </tr>
                           </thead>
@@ -1496,29 +1520,33 @@ export default function WarehouseGiacenze() {
                                 }`}
                                 onClick={() => setSelectedMovementItemId(row.id)}
                               >
-                                <td className="px-2 py-2">
-                                  <button
-                                    type="button"
-                                    className="h-7 w-7 rounded-md border border-[var(--border)] text-[var(--muted)] opacity-100 transition hover:bg-[var(--hover)] sm:opacity-0 sm:group-hover:opacity-100 sm:focus:opacity-100"
-                                    aria-label="Rimuovi riga movimento"
-                                    onClick={(event) => {
-                                      event.stopPropagation();
-                                      removeMovementItemById(row.id);
-                                    }}
-                                  >
-                                    <i className="fa-solid fa-arrow-up text-[11px] sm:hidden" aria-hidden="true" />
-                                    <i className="fa-solid fa-arrow-left hidden text-[11px] sm:inline-block" aria-hidden="true" />
-                                  </button>
+                                <td className="px-3 py-2 text-[12px]">
+                                  <div className="flex items-center gap-2">
+                                    <button
+                                      type="button"
+                                      className="h-7 w-7 shrink-0 rounded-md border border-[var(--border)] text-[var(--muted)] opacity-100 transition hover:bg-[var(--hover)] sm:opacity-0 sm:group-hover:opacity-100 sm:focus:opacity-100"
+                                      aria-label="Rimuovi riga movimento"
+                                      onClick={(event) => {
+                                        event.stopPropagation();
+                                        removeMovementItemById(row.id);
+                                      }}
+                                    >
+                                      <i className="fa-solid fa-arrow-up text-[11px] sm:hidden" aria-hidden="true" />
+                                      <i className="fa-solid fa-arrow-left hidden text-[11px] sm:inline-block" aria-hidden="true" />
+                                    </button>
+                                    <span>{row.articolo?.codiceArticolo || "-"}</span>
+                                  </div>
                                 </td>
-                                <td className="px-3 py-2">{row.articolo?.descrizione || row.articolo?.codiceArticolo}</td>
-                                <td className="px-3 py-2">{row.quantita}</td>
-                                <td className="px-3 py-2">{row.unitaMisura || "-"}</td>
-                                <td className="px-3 py-2 text-[var(--muted)]">{row.note || "-"}</td>
+                                <td className="px-3 py-2 text-[12px]">{row.seriali?.[0] || "-"}</td>
+                                <td className="px-3 py-2 text-[12px]">{row.articolo?.scaffale || "-"}</td>
+                                <td className="px-3 py-2 text-[12px]">{row.articolo?.riga || "-"}</td>
+                                <td className="px-3 py-2 text-[12px]">{row.articolo?.colonna || "-"}</td>
+                                <td className="px-3 py-2 text-[12px] text-[var(--muted)]">{row.note || "-"}</td>
                               </tr>
                             ))}
                             {movementItems.length === 0 ? (
                               <tr>
-                                <td colSpan={5} className="px-3 py-4 text-center text-sm text-[var(--muted)]">
+                                <td colSpan={6} className="px-3 py-4 text-center text-xs text-[var(--muted)]">
                                   Nessuna riga inserita.
                                 </td>
                               </tr>
@@ -1554,47 +1582,90 @@ export default function WarehouseGiacenze() {
                 >
                 <section
                   id="carico-extra-cards"
-                  className="grid items-start gap-3 lg:grid-cols-12 lg:gap-4 2xl:mx-auto 2xl:w-full 2xl:max-w-[1680px]"
+                  className="grid w-full items-start gap-3 lg:grid-cols-12 lg:items-stretch lg:gap-4"
                 >
-                  <div className="h-fit rounded-lg border border-[var(--border)] bg-[var(--surface)] p-3 lg:col-span-4 lg:p-2.5">
-                    <p className="text-xs uppercase tracking-[0.2em] text-[var(--muted)]">Registrazione DDT</p>
-                    <label className="mt-2 block text-sm lg:mt-1.5">
+                  <div className="h-full rounded-lg border border-[var(--border)] bg-[var(--surface)] p-3 lg:col-span-6 lg:flex lg:flex-col lg:p-2.5">
+                    <p className="text-[11px] uppercase tracking-[0.2em] text-[var(--muted)]">Registrazione DDT</p>
+                    <label className="mt-2 block text-xs lg:mt-1.5">
                       <span className="text-xs uppercase tracking-[0.2em] text-[var(--muted)]">Codice</span>
                       <input
                         type="text"
                         value={ddtCode}
                         onChange={(event) => setDdtCode(event.target.value)}
-                        className="mt-1.5 w-full rounded-md border border-[var(--border)] bg-[var(--surface)] px-3 py-2 text-sm lg:py-1.5"
+                        className="mt-1.5 w-full rounded-md border border-[var(--border)] bg-[var(--surface)] px-3 py-2 text-xs lg:py-1.5"
                         placeholder="Inserisci codice DDT"
                       />
                     </label>
                     <input
                       ref={ddtPdfInputRef}
                       type="file"
-                      accept=".pdf,application/pdf"
+                      multiple
                       className="hidden"
-                      onChange={(event) => setDdtPdfFile(event.target.files?.[0] || null)}
+                      onChange={handleDdtFileSelection}
                     />
-                    <button
-                      type="button"
-                      onClick={() => ddtPdfInputRef.current?.click()}
-                      className="mt-2 flex h-20 w-full flex-col items-center justify-center rounded-md border border-dashed border-[var(--border)] bg-[var(--surface-soft)] px-3 text-center hover:bg-[var(--hover)] lg:h-12"
-                    >
-                      <i className="fa-solid fa-file-pdf text-lg text-[var(--muted)]" aria-hidden="true" />
-                      <span className="mt-1 text-sm font-semibold"></span>
-                    </button>
+                    <div className="mt-2 grid gap-2 lg:min-h-[120px] lg:flex-1 lg:grid-cols-[382fr_618fr]">
+                      <button
+                        type="button"
+                        onClick={() => ddtPdfInputRef.current?.click()}
+                        className="flex h-20 w-full flex-col items-center justify-center rounded-md border border-dashed border-[var(--border)] bg-[var(--surface-soft)] px-3 text-center hover:bg-[var(--hover)] lg:h-full"
+                      >
+                        <i className="fa-solid fa-file-arrow-up text-lg text-[var(--muted)]" aria-hidden="true" />
+                        <span className="mt-1 text-[11px] font-semibold">Carica documenti</span>
+                        {ddtUploadedFiles.length > 0 ? (
+                          <span className="mt-1 text-[10px] text-[var(--muted)]">{ddtUploadedFiles.length} file</span>
+                        ) : null}
+                      </button>
+
+                      <div className="min-w-0 overflow-hidden rounded-md border border-[var(--border)]">
+                        <div className="h-full overflow-y-auto overflow-x-hidden pr-1">
+                          <table className="w-full table-fixed text-[11px]">
+                            <tbody>
+                              {ddtUploadedFiles.map((row) => (
+                                <tr key={row.id} className="border-t border-[var(--border)] first:border-t-0">
+                                  <td className="px-2 py-1.5">
+                                    <p className="truncate" title={row.file.name}>
+                                      {row.file.name}
+                                    </p>
+                                  </td>
+                                  <td className="w-[180px] px-2 py-1.5">
+                                    <select
+                                      value={row.docType}
+                                      onChange={(event) => handleDdtFileTypeChange(row.id, event.target.value)}
+                                      className="w-full rounded-md border border-[var(--border)] bg-[var(--surface)] px-2 py-1 text-[11px] outline-none"
+                                    >
+                                      {DDT_FILE_TYPES.map((type) => (
+                                        <option key={type} value={type}>
+                                          {type}
+                                        </option>
+                                      ))}
+                                    </select>
+                                  </td>
+                                </tr>
+                              ))}
+                              {ddtUploadedFiles.length === 0 ? (
+                                <tr>
+                                  <td colSpan={2} className="px-2 py-3 text-center text-[10px] text-[var(--muted)]">
+                                    Nessun documento caricato.
+                                  </td>
+                                </tr>
+                              ) : null}
+                            </tbody>
+                          </table>
+                        </div>
+                      </div>
+                    </div>
                     <button
                       type="button"
                       onClick={importDataFromDdt}
-                      disabled={ddtImporting || !ddtPdfFile}
-                      className="mt-2 w-full rounded-md bg-emerald-500 px-3 py-2 text-sm font-semibold text-white hover:bg-emerald-600 disabled:cursor-not-allowed disabled:opacity-60 lg:py-1.5"
+                      disabled={ddtImporting || !ddtUploadedFiles.some((row) => row.docType === "ddt")}
+                      className="mt-2 w-full rounded-md bg-emerald-500 px-3 py-2 text-xs font-semibold text-white hover:bg-emerald-600 disabled:cursor-not-allowed disabled:opacity-60 lg:mt-3 lg:py-1.5"
                     >
                       {ddtImporting ? "Importazione in corso..." : "Importa dati da DDT"}
                     </button>
                   </div>
 
-                  <div className="h-fit rounded-lg border border-[var(--border)] bg-[var(--surface)] p-3 lg:col-span-5 lg:p-2.5">
-                    <p className="text-xs uppercase tracking-[0.2em] text-[var(--muted)]">Photo Upload / P/N OEM / Note</p>
+                  <div className="h-full rounded-lg border border-[var(--border)] bg-[var(--surface)] p-3 lg:col-span-3 lg:flex lg:flex-col lg:p-2.5">
+                    <p className="text-[11px] uppercase tracking-[0.2em] text-[var(--muted)]">Photo Upload / P/N OEM / Note</p>
                     <input
                       ref={photoInputRef}
                       type="file"
@@ -1605,7 +1676,7 @@ export default function WarehouseGiacenze() {
                     <button
                       type="button"
                       onClick={() => photoInputRef.current?.click()}
-                      className="mt-2 flex h-16 w-full items-center justify-center rounded-md border border-dashed border-[var(--border)] bg-[var(--surface-soft)] text-sm font-semibold hover:bg-[var(--hover)] lg:h-10"
+                      className="mt-2 flex h-16 w-full items-center justify-center rounded-md border border-dashed border-[var(--border)] bg-[var(--surface-soft)] text-xs font-semibold hover:bg-[var(--hover)] lg:h-10"
                     >
                       {photoFile?.name || "Upload foto articolo"}
                     </button>
@@ -1613,48 +1684,66 @@ export default function WarehouseGiacenze() {
                       type="button"
                       onClick={scanLabelWithAi}
                       disabled={labelScanning || !photoFile}
-                      className="mt-2 w-full rounded-md border border-[var(--border)] px-3 py-2 text-sm font-semibold hover:bg-[var(--hover)] disabled:cursor-not-allowed disabled:opacity-60 lg:py-1.5"
+                      className="mt-2 w-full rounded-md border border-[var(--border)] px-3 py-2 text-xs font-semibold hover:bg-[var(--hover)] disabled:cursor-not-allowed disabled:opacity-60 lg:py-1.5"
                     >
                       {labelScanning ? "Scansione AI..." : "Scansiona etichetta (AI)"}
                     </button>
-                    <label className="mt-2 block text-sm lg:mt-1.5">
+                    <label className="mt-2 block text-xs lg:mt-1.5">
                       <span className="text-xs uppercase tracking-[0.2em] text-[var(--muted)]">P/N OEM</span>
                       <input
                         type="text"
                         value={oemPartNumber}
                         onChange={(event) => setOemPartNumber(event.target.value)}
-                        className="mt-1.5 w-full rounded-md border border-[var(--border)] bg-[var(--surface)] px-3 py-2 text-sm lg:py-1.5"
+                        className="mt-1.5 w-full rounded-md border border-[var(--border)] bg-[var(--surface)] px-3 py-2 text-xs lg:py-1.5"
                         placeholder="Inserisci part number OEM"
                       />
                     </label>
-                    <label className="mt-2 block text-sm lg:mt-1.5">
+                    <label className="mt-2 block text-xs lg:mt-1.5">
                       <span className="text-xs uppercase tracking-[0.2em] text-[var(--muted)]">Note</span>
                       <textarea
                         value={movementNotes}
                         onChange={(event) => setMovementNotes(event.target.value)}
                         rows={2}
-                        className="mt-1.5 h-16 w-full resize-none rounded-md border border-[var(--border)] bg-[var(--surface)] px-3 py-2 text-sm lg:h-10 lg:py-1.5"
+                        className="mt-1.5 h-16 w-full resize-none rounded-md border border-[var(--border)] bg-[var(--surface)] px-3 py-2 text-xs lg:h-10 lg:py-1.5"
                         placeholder="Inserisci note"
                       />
                     </label>
                   </div>
 
                   <div className="h-fit rounded-lg border border-[var(--border)] bg-[var(--surface)] p-3 lg:col-span-3 lg:p-2.5">
-                    <p className="text-xs uppercase tracking-[0.2em] text-[var(--muted)]">Costo di acquisto</p>
+                    <p className="text-[11px] uppercase tracking-[0.2em] text-[var(--muted)]">Costo di acquisto</p>
                     <div className="mt-2 flex items-center rounded-md border border-[var(--border)] bg-[var(--surface)] px-3 py-2 lg:py-1.5">
-                      <span className="mr-3 text-lg text-[var(--muted)]">EUR</span>
+                      <span className="mr-3 text-sm text-[var(--muted)]">EUR</span>
                       <input
                         type="number"
                         min="0"
                         step="0.01"
                         value={purchaseCost}
                         onChange={(event) => setPurchaseCost(event.target.value)}
-                        className="w-full bg-transparent text-2xl font-semibold leading-none outline-none lg:text-[34px]"
+                        className="w-full bg-transparent text-xl font-semibold leading-none outline-none lg:text-[28px]"
                         placeholder="0,00"
                       />
                     </div>
                   </div>
                 </section>
+                </div>
+
+                <div className="mt-2 flex items-center justify-end gap-2 border-t border-[var(--border)] pt-2">
+                  <button
+                    type="button"
+                    onClick={() => setCaricoWizardOpen(false)}
+                    className="rounded-md border border-[var(--border)] px-3 py-1.5 text-xs font-semibold text-[var(--muted)] hover:bg-[var(--hover)]"
+                  >
+                    Annulla
+                  </button>
+                  <button
+                    type="button"
+                    onClick={submitCarico}
+                    disabled={caricoSaving || !selectedCausale || !selectedSupplier || movementItems.length === 0}
+                    className="rounded-md bg-emerald-500 px-3 py-1.5 text-xs font-semibold text-white hover:bg-emerald-600 disabled:cursor-not-allowed disabled:opacity-60"
+                  >
+                    {caricoSaving ? "Salvataggio..." : "Conferma carico"}
+                  </button>
                 </div>
 
                 {aiAssistError ? <p className="text-sm text-rose-500">{aiAssistError}</p> : null}
@@ -1828,5 +1917,3 @@ export default function WarehouseGiacenze() {
     </AppLayout>
   );
 }
-
-
