@@ -51,3 +51,7 @@ Queste regole sono vincolanti per ogni modifica futura alla pagina `WarehouseGia
   - widescreen
   - mobile stretto
   - assenza di overflow-x viewport
+
+## Regola globale sidebar/menu utente (futuri progetti)
+- Nella vista mobile con overlay menu, i controlli utente devono stare nello stesso blocco: tema, supporto, profilo, informazioni, logout.
+- Evitare controlli utente isolati fuori dal gruppo profilo (es. toggle tema separato dal menu utente).

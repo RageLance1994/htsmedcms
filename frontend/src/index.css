@@ -97,3 +97,25 @@ html.dark {
   height: auto !important;
   min-height: 0 !important;
 }
+
+/* Keep the archive table scrollbar visible across platforms */
+.warehouse-articles-scroll {
+  scrollbar-gutter: stable;
+  scrollbar-width: thin;
+  scrollbar-color: var(--muted-2) var(--surface-soft);
+}
+
+.warehouse-articles-scroll::-webkit-scrollbar {
+  width: 10px;
+  height: 10px;
+}
+
+.warehouse-articles-scroll::-webkit-scrollbar-track {
+  background: var(--surface-soft);
+}
+
+.warehouse-articles-scroll::-webkit-scrollbar-thumb {
+  background: var(--muted-2);
+  border-radius: 9999px;
+  border: 2px solid var(--surface-soft);
+}

@@ -5,6 +5,177 @@ const router = express.Router();
 
 const getWarehouseDb = () => mongoose.connection.useDb("htstest", { useCache: true });
 
+const normalizeWarehouseCode = (value) => String(value || "").trim();
+const normalizeSerial = (value) => String(value || "").trim();
+const parseBool = (value, fallback = false) => {
+  if (typeof value === "boolean") return value;
+  if (typeof value === "number") return value !== 0;
+  if (typeof value === "string") {
+    const v = value.trim().toLowerCase();
+    if (["1", "true", "si", "sì", "yes", "y"].includes(v)) return true;
+    if (["0", "false", "no", "n"].includes(v)) return false;
+  }
+  return fallback;
+};
+
+const buildWarehouseCacheRowsPipeline = (codes) => [
+  { $addFields: { codiceTrim: { $trim: { input: "$Codice Articolo" } } } },
+  { $match: { codiceTrim: { $in: codes } } },
+  {
+    $lookup: {
+      from: "Movimenti di magazzino",
+      let: { code: "$codiceTrim" },
+      pipeline: [
+        { $match: { $expr: { $eq: [{ $trim: { input: "$Cod_Articolo" } }, "$$code"] } } },
+        {
+          $lookup: {
+            from: "Causali di magazzino",
+            localField: "Cod_Causale",
+            foreignField: "cod",
+            as: "causale"
+          }
+        },
+        { $unwind: { path: "$causale", preserveNullAndEmptyArrays: true } },
+        {
+          $project: {
+            qty: "$QT movimentata",
+            azFisica: "$causale.Azione su Giacenza Fisica",
+            azFiscale: "$causale.Azione su Giacenza Fiscale"
+          }
+        },
+        {
+          $group: {
+            _id: null,
+            giacenzaFisica: {
+              $sum: { $multiply: ["$qty", { $ifNull: ["$azFisica", 0] }] }
+            },
+            giacenzaFiscale: {
+              $sum: { $multiply: ["$qty", { $ifNull: ["$azFiscale", 0] }] }
+            }
+          }
+        }
+      ],
+      as: "movimentiAgg"
+    }
+  },
+  {
+    $addFields: {
+      giacenzaFisica: { $ifNull: [{ $arrayElemAt: ["$movimentiAgg.giacenzaFisica", 0] }, 0] },
+      giacenzaFiscale: { $ifNull: [{ $arrayElemAt: ["$movimentiAgg.giacenzaFiscale", 0] }, 0] }
+    }
+  },
+  {
+    $project: {
+      _id: 0,
+      codiceArticolo: "$codiceTrim",
+      descrizione: "$Descrizione",
+      unitaMisura: {
+        $ifNull: [
+          "$UnitÃƒÂ  di Misura",
+          { $ifNull: ["$UnitÃ  di Misura", "$Unità di Misura"] }
+        ]
+      },
+      giacenzaMinima: "$Giacenza Minina",
+      alertGiacenza: "$Alert Giacenza",
+      giacenzaFisica: 1,
+      giacenzaFiscale: 1,
+      obsoleto: "$Obsoleto"
+    }
+  }
+];
+
+const refreshWarehouseCacheByCodes = async (db, codes) => {
+  const uniqueCodes = Array.from(new Set(codes.map(normalizeWarehouseCode).filter(Boolean)));
+  if (uniqueCodes.length === 0) return;
+
+  const rows = await db
+    .collection("Codici_di_magazzino")
+    .aggregate(buildWarehouseCacheRowsPipeline(uniqueCodes), { allowDiskUse: true })
+    .toArray();
+
+  if (rows.length === 0) return;
+
+  const operations = rows.flatMap((row) => [
+    {
+      deleteMany: {
+        filter: { codiceArticolo: row.codiceArticolo }
+      }
+    },
+    {
+      insertOne: {
+        document: row
+      }
+    }
+  ]);
+
+  if (operations.length > 0) {
+    await db.collection("warehouse_giacenze").bulkWrite(operations, { ordered: true });
+  }
+};
+
+const getActiveSerialSet = async (db, pairs) => {
+  const keys = pairs
+    .map((pair) => ({
+      codice: normalizeWarehouseCode(pair?.codiceArticolo),
+      seriale: normalizeSerial(pair?.seriale)
+    }))
+    .filter((pair) => pair.codice && pair.seriale);
+  if (keys.length === 0) return new Set();
+
+  const codes = Array.from(new Set(keys.map((k) => k.codice)));
+  const serials = Array.from(new Set(keys.map((k) => k.seriale)));
+
+  const rows = await db
+    .collection("Allocazione Magazzino")
+    .aggregate([
+      {
+        $addFields: {
+          codice: { $trim: { input: { $ifNull: ["$cod_articolo", ""] } } },
+          seriale: { $trim: { input: { $ifNull: ["$Seriale", ""] } } }
+        }
+      },
+      { $match: { codice: { $in: codes }, seriale: { $in: serials, $ne: "" } } },
+      {
+        $lookup: {
+          from: "Movimenti di magazzino",
+          localField: "cod_movimento",
+          foreignField: "cod",
+          as: "mov"
+        }
+      },
+      { $unwind: { path: "$mov", preserveNullAndEmptyArrays: true } },
+      {
+        $lookup: {
+          from: "Causali di magazzino",
+          localField: "mov.Cod_Causale",
+          foreignField: "cod",
+          as: "causale"
+        }
+      },
+      { $unwind: { path: "$causale", preserveNullAndEmptyArrays: true } },
+      {
+        $project: {
+          codice: 1,
+          seriale: 1,
+          azioneFisica: { $ifNull: ["$causale.Azione su Giacenza Fisica", 0] },
+          dataMovimento: "$mov.Data",
+          codMov: "$mov.cod"
+        }
+      },
+      { $sort: { codice: 1, seriale: 1, dataMovimento: -1, codMov: -1 } },
+      {
+        $group: {
+          _id: { codice: "$codice", seriale: "$seriale" },
+          azioneFisica: { $first: "$azioneFisica" }
+        }
+      },
+      { $match: { azioneFisica: { $gt: 0 } } }
+    ])
+    .toArray();
+
+  return new Set(rows.map((r) => `${r?._id?.codice}::${r?._id?.seriale}`));
+};
+
 const ensureIndexes = async () => {
   const db = getWarehouseDb();
   await Promise.all([
@@ -217,7 +388,13 @@ router.get("/articoli", async (req, res) => {
     const data = rows.map((row) => ({
       codiceArticolo: row["Codice Articolo"],
       descrizione: row.Descrizione || "",
-      unitaMisura: row["UnitÃ  di Misura"] || row["Unità di Misura"] || row["Unità di misura"] || "",
+      unitaMisura:
+        row["UnitÃƒÂ  di Misura"] ||
+        row["UnitÃ  di Misura"] ||
+        row["UnitÃ  di misura"] ||
+        row["Unità di Misura"] ||
+        row["Unità di misura"] ||
+        "",
       ammetteSeriale: row["Ammette Seriale"] === true,
       obsoleto: row.Obsoleto === true,
       costoAcquisto: row["Costo di Acquisto"] ?? null
@@ -272,6 +449,105 @@ router.get("/fornitori", async (req, res) => {
   }
 });
 
+router.post("/articoli", async (req, res) => {
+  try {
+    const db = getWarehouseDb();
+    const payload = req.body || {};
+
+    const codiceArticolo = normalizeWarehouseCode(payload.codiceArticolo || payload["Codice Articolo"]);
+    const descrizione = String(payload.descrizione || payload.Descrizione || "").trim();
+    const tipo = String(payload.tipo || payload.Tipo || "").trim().toUpperCase();
+    const centroDiCosto = String(payload.centroDiCosto || payload["Centro di Costo"] || "").trim().toUpperCase();
+    const unitaMisura = String(payload.unitaMisura || payload["Unità di Misura"] || payload["UnitÃ  di Misura"] || "QT")
+      .trim()
+      .toUpperCase();
+    const marca = String(payload.marca || payload.Marca || "").trim();
+    const valorizza = parseBool(payload.valorizza, false);
+    const ammetteSeriale = parseBool(payload.ammetteSeriale, false);
+    const prezzoVendita = payload.prezzoVendita !== undefined && payload.prezzoVendita !== null && payload.prezzoVendita !== ""
+      ? Number(payload.prezzoVendita)
+      : null;
+    const costoAcquisto = payload.costoAcquisto !== undefined && payload.costoAcquisto !== null && payload.costoAcquisto !== ""
+      ? Number(payload.costoAcquisto)
+      : null;
+    const partNumber = String(payload.partNumber || payload["Part Number"] || "").trim();
+    const vendorCode = String(payload.vendorCode || payload["Vendor Code"] || "").trim();
+    const alertGiacenza = parseBool(payload.alertGiacenza, false);
+    const giacenzaMinima = payload.giacenzaMinima !== undefined && payload.giacenzaMinima !== null && payload.giacenzaMinima !== ""
+      ? Number(payload.giacenzaMinima)
+      : null;
+    const obsoleto = parseBool(payload.obsoleto, false);
+    const note = String(payload.note || payload.Note || "").trim();
+
+    if (!codiceArticolo || !descrizione || !tipo || !centroDiCosto) {
+      return res.status(400).json({ errore: "Campi obbligatori mancanti: codice, descrizione, tipo, centro di costo" });
+    }
+    if ((prezzoVendita !== null && !Number.isFinite(prezzoVendita)) || (costoAcquisto !== null && !Number.isFinite(costoAcquisto))) {
+      return res.status(400).json({ errore: "Prezzo/Costo non validi" });
+    }
+    if (giacenzaMinima !== null && !Number.isFinite(giacenzaMinima)) {
+      return res.status(400).json({ errore: "Giacenza minima non valida" });
+    }
+
+    const existing = await db.collection("Codici_di_magazzino").findOne(
+      { "Codice Articolo": codiceArticolo },
+      { projection: { _id: 0, "Codice Articolo": 1 } }
+    );
+    if (existing) {
+      return res.status(409).json({ errore: `Articolo già presente: ${codiceArticolo}` });
+    }
+
+    const now = new Date();
+    const doc = {
+      "Codice Articolo": codiceArticolo,
+      Descrizione: descrizione,
+      Tipo: tipo,
+      Marca: marca || null,
+      "Centro di Costo": centroDiCosto,
+      Valorizza: valorizza,
+      "Ammette Seriale": ammetteSeriale,
+      "Unità di Misura": unitaMisura,
+      "UnitÃ  di Misura": unitaMisura,
+      Note: note || null,
+      "Costo di Acquisto": costoAcquisto,
+      "Prezzo di Vendita": prezzoVendita,
+      "Part Number": partNumber || null,
+      "Vendor Code": vendorCode || null,
+      "Alert Giacenza": alertGiacenza,
+      "Giacenza Minina": giacenzaMinima,
+      Obsoleto: obsoleto,
+      LastEditDate: now,
+      CreationDate: now
+    };
+
+    await db.collection("Codici_di_magazzino").insertOne(doc);
+
+    res.status(201).json({
+      ok: true,
+      articolo: {
+        codiceArticolo,
+        descrizione,
+        tipo,
+        marca,
+        centroDiCosto,
+        valorizza,
+        ammetteSeriale,
+        unitaMisura,
+        costoAcquisto,
+        prezzoVendita,
+        partNumber,
+        vendorCode,
+        alertGiacenza,
+        giacenzaMinima,
+        obsoleto,
+        note
+      }
+    });
+  } catch (error) {
+    res.status(500).json({ errore: "Errore salvataggio articolo", dettaglio: error.message });
+  }
+});
+
 router.post("/carico", async (req, res) => {
   try {
     const db = getWarehouseDb();
@@ -290,13 +566,62 @@ router.post("/carico", async (req, res) => {
 
     const now = new Date();
     const date = new Date(dataMovimento);
-    const docs = items.map((item) => {
-      const qty = Math.max(Number(item.quantita || 0), 0);
+    const normalizedItems = items.map((item, index) => {
+      const qty = Number(item.quantita);
+      if (!Number.isFinite(qty) || qty < 1) {
+        throw new Error(`Quantita non valida alla riga ${index + 1}: minimo consentito 1`);
+      }
       const articolo = item.articolo || {};
+      const codiceArticolo = normalizeWarehouseCode(articolo.codiceArticolo || item.codiceArticolo);
+      if (!codiceArticolo) {
+        throw new Error(`Codice articolo mancante alla riga ${index + 1}`);
+      }
+      const seriale = normalizeSerial(item.seriale || item.seriali?.[0] || "");
+      const ammetteSeriale = articolo?.ammetteSeriale === true;
+      if (ammetteSeriale && !seriale) {
+        throw new Error(`Seriale obbligatorio alla riga ${index + 1} per l'articolo ${codiceArticolo}`);
+      }
+      if (ammetteSeriale && qty !== 1) {
+        throw new Error(`Quantita non valida alla riga ${index + 1}: per articoli serializzati usare quantita 1`);
+      }
+      return {
+        item,
+        articolo,
+        qty,
+        codiceArticolo,
+        seriale
+      };
+    });
+
+    const seenInPayload = new Set();
+    for (const [idx, row] of normalizedItems.entries()) {
+      if (!row.seriale) continue;
+      const key = `${row.codiceArticolo}::${row.seriale}`;
+      if (seenInPayload.has(key)) {
+        throw new Error(`Seriale duplicato nel carico (riga ${idx + 1}): ${row.seriale} per articolo ${row.codiceArticolo}`);
+      }
+      seenInPayload.add(key);
+    }
+
+    const activeSerialSet = await getActiveSerialSet(
+      db,
+      normalizedItems.map((row) => ({ codiceArticolo: row.codiceArticolo, seriale: row.seriale }))
+    );
+    for (const [idx, row] of normalizedItems.entries()) {
+      if (!row.seriale) continue;
+      const key = `${row.codiceArticolo}::${row.seriale}`;
+      if (activeSerialSet.has(key)) {
+        throw new Error(
+          `Seriale gia presente in magazzino (riga ${idx + 1}): ${row.seriale} per articolo ${row.codiceArticolo}`
+        );
+      }
+    }
+
+    const docs = normalizedItems.map(({ item, articolo, qty, codiceArticolo }) => {
       return {
         Data: Number.isNaN(date.getTime()) ? now : date,
         Cod_Causale: Number(causale.cod),
-        Cod_Articolo: articolo.codiceArticolo || item.codiceArticolo,
+        Cod_Articolo: codiceArticolo,
         "QT movimentata": qty,
         "Part Number": articolo.partNumber || item.partNumber || null,
         "Costo di Acquisto": articolo.costoAcquisto ?? null,
@@ -311,82 +636,45 @@ router.post("/carico", async (req, res) => {
         CreationDate: now,
         Cod_Allegato: null,
         Cod_Allegato_Foto: null,
-        "UnitÃ  di Misura": articolo.unitaMisura || null
+        "UnitÃƒÂ  di Misura": articolo.unitaMisura || null
       };
     });
 
     await db.collection("Movimenti di magazzino").insertMany(docs);
 
-    const codes = docs.map((doc) => doc.Cod_Articolo).filter(Boolean);
-    if (codes.length) {
-      const pipeline = [
-        { $addFields: { codiceTrim: { $trim: { input: "$Codice Articolo" } } } },
-        { $match: { codiceTrim: { $in: codes } } },
-        {
-          $lookup: {
-            from: "Movimenti di magazzino",
-            let: { code: "$codiceTrim" },
-            pipeline: [
-              { $match: { $expr: { $eq: ["$Cod_Articolo", "$$code"] } } },
-              {
-                $lookup: {
-                  from: "Causali di magazzino",
-                  localField: "Cod_Causale",
-                  foreignField: "cod",
-                  as: "causale"
-                }
-              },
-              { $unwind: { path: "$causale", preserveNullAndEmptyArrays: true } },
-              {
-                $project: {
-                  qty: "$QT movimentata",
-                  azFisica: "$causale.Azione su Giacenza Fisica",
-                  azFiscale: "$causale.Azione su Giacenza Fiscale"
-                }
-              },
-              {
-                $group: {
-                  _id: null,
-                  giacenzaFisica: {
-                    $sum: { $multiply: ["$qty", { $ifNull: ["$azFisica", 0] }] }
-                  },
-                  giacenzaFiscale: {
-                    $sum: { $multiply: ["$qty", { $ifNull: ["$azFiscale", 0] }] }
-                  }
-                }
-              }
-            ],
-            as: "movimentiAgg"
-          }
-        },
-        {
-          $addFields: {
-            giacenzaFisica: { $ifNull: [{ $arrayElemAt: ["$movimentiAgg.giacenzaFisica", 0] }, 0] },
-            giacenzaFiscale: { $ifNull: [{ $arrayElemAt: ["$movimentiAgg.giacenzaFiscale", 0] }, 0] }
-          }
-        },
-        {
-          $project: {
-            _id: 0,
-            codiceArticolo: "$codiceTrim",
-            descrizione: "$Descrizione",
-            unitaMisura: "$UnitÃ  di Misura",
-            giacenzaMinima: "$Giacenza Minina",
-            alertGiacenza: "$Alert Giacenza",
-            giacenzaFisica: 1,
-            giacenzaFiscale: 1,
-            obsoleto: "$Obsoleto"
-          }
-        },
-        { $merge: { into: "warehouse_giacenze", whenMatched: "replace", whenNotMatched: "insert" } }
-      ];
-      await db.collection("Codici_di_magazzino").aggregate(pipeline, { allowDiskUse: true }).toArray();
+    const lastAlloc = await db
+      .collection("Allocazione Magazzino")
+      .find({}, { projection: { cod: 1 } })
+      .sort({ cod: -1 })
+      .limit(1)
+      .toArray();
+    let nextAllocCod = Number(lastAlloc?.[0]?.cod || 0) + 1;
+    const deposito = Number(causale?.depositoFinale ?? causale?.depositoIniziale ?? 0);
+    const allocazioni = normalizedItems.map(({ item, articolo, seriale }, index) => {
+      return {
+        cod_articolo: docs[index].Cod_Articolo,
+        Seriale: seriale || null,
+        Scaffale: String(item?.scaffale ?? articolo?.scaffale ?? ""),
+        Riga: String(item?.riga ?? articolo?.riga ?? ""),
+        Colonna: String(item?.colonna ?? articolo?.colonna ?? ""),
+        Note: String(item?.note || ""),
+        cod_movimento: docs[index].cod,
+        cod: nextAllocCod++,
+        Deposito: deposito
+      };
+    });
+    if (allocazioni.length > 0) {
+      await db.collection("Allocazione Magazzino").insertMany(allocazioni);
     }
 
-    res.json({ ok: true, inserted: docs.length });
+    const codes = docs.map((doc) => doc.Cod_Articolo).filter(Boolean);
+    await refreshWarehouseCacheByCodes(db, codes);
+
+    res.json({ ok: true, inserted: docs.length, allocazioni: allocazioni.length });
   } catch (error) {
     res.status(500).json({ errore: "Errore salvataggio carico", dettaglio: error.message });
   }
 });
 
 export default router;
+

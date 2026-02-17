@@ -86,6 +86,7 @@ export default function AppLayout({
   const [collapsed, setCollapsed] = useState(false);
   const [openSection, setOpenSection] = useState(defaultOpenSection);
   const [mobileOpen, setMobileOpen] = useState(false);
+  const [mobileUserOpen, setMobileUserOpen] = useState(false);
   const [darkMode, setDarkMode] = useState(() => localStorage.getItem("hts_dark") === "1");
   const [showUserMenu, setShowUserMenu] = useState(false);
   const userMenuRef = useRef(null);
@@ -93,6 +94,12 @@ export default function AppLayout({
   useEffect(() => {
     setOpenSection(defaultOpenSection);
   }, [defaultOpenSection]);
+
+  useEffect(() => {
+    if (!mobileOpen) {
+      setMobileUserOpen(false);
+    }
+  }, [mobileOpen]);
 
   useEffect(() => {
     document.documentElement.classList.toggle("dark", darkMode);
@@ -345,7 +352,7 @@ export default function AppLayout({
             onClick={() => setMobileOpen(false)}
             aria-label="Chiudi menu"
           />
-          <div className="relative ml-auto h-full w-80 bg-[var(--surface)] shadow-xl">
+          <div className="relative ml-auto flex h-full w-80 flex-col bg-[var(--surface)] shadow-xl">
             <div className="flex items-center justify-between border-b border-[var(--border)] px-4 py-4">
               <div className="text-sm font-semibold">Menu</div>
               <button
@@ -356,15 +363,78 @@ export default function AppLayout({
                 <i className="fa-solid fa-xmark" aria-hidden="true" />
               </button>
             </div>
-            <div className="space-y-3 px-4 py-4">
-              <button
-                type="button"
-                className="flex h-8 items-center gap-2 rounded-md border border-[var(--border)] bg-[var(--surface)] px-3 text-[10px] uppercase tracking-[0.2em] text-[var(--muted)]"
-                onClick={() => setDarkMode((prev) => !prev)}
-              >
-                <i className={`fa-solid ${darkMode ? "fa-sun" : "fa-moon"}`} aria-hidden="true" />
-                <span>{darkMode ? "Light" : "Dark"}</span>
-              </button>
+            <div className="min-h-0 flex-1 overflow-y-auto px-4 py-4">
+              <div className="space-y-3">
+              <div className="rounded-lg border border-[var(--border)] bg-[var(--surface)] p-3">
+                <button
+                  type="button"
+                  onClick={() => setMobileUserOpen((prev) => !prev)}
+                  className="flex w-full items-center justify-between gap-3 rounded-md px-1 py-1 text-left"
+                >
+                  <span className="flex items-center gap-3">
+                    <span className="grid h-9 w-9 place-items-center rounded-full bg-[var(--surface-strong)] text-xs font-semibold">
+                      {avatarText}
+                    </span>
+                    <span>
+                      <span className="block text-sm font-semibold text-[var(--page-fg)]">{userDisplay}</span>
+                      <span className="block text-[10px] uppercase tracking-[0.2em] text-[var(--muted)]">Controlli utente</span>
+                    </span>
+                  </span>
+                  <span className={`text-[var(--muted)] transition-transform ${mobileUserOpen ? "rotate-180" : ""}`}>
+                    <i className="fa-solid fa-caret-down" aria-hidden="true" />
+                  </span>
+                </button>
+                <div className={`overflow-hidden transition-all ${mobileUserOpen ? "mt-2 max-h-96" : "max-h-0"}`}>
+                  <div className="space-y-1">
+                    <button
+                      type="button"
+                      className="flex w-full items-center justify-between rounded-md px-2.5 py-2 text-sm text-[var(--page-fg)] hover:bg-[var(--hover)]"
+                      onClick={() => setDarkMode((prev) => !prev)}
+                    >
+                      <span className="flex items-center gap-2">
+                        <i className={`fa-solid ${darkMode ? "fa-moon" : "fa-sun"} text-xs`} aria-hidden="true" />
+                        Tema
+                      </span>
+                      <span className="text-xs text-[var(--muted)]">{darkMode ? "Scuro" : "Chiaro"}</span>
+                    </button>
+                    <button
+                      type="button"
+                      className="flex w-full items-center gap-2 rounded-md px-2.5 py-2 text-sm text-[var(--page-fg)] hover:bg-[var(--hover)]"
+                      onClick={handleSupport}
+                    >
+                      <i className="fa-solid fa-life-ring text-xs" aria-hidden="true" />
+                      Supporto
+                    </button>
+                    <button
+                      type="button"
+                      className="flex w-full items-center gap-2 rounded-md px-2.5 py-2 text-sm text-[var(--page-fg)] hover:bg-[var(--hover)] disabled:cursor-not-allowed disabled:opacity-60"
+                      onClick={profileAction || undefined}
+                      disabled={!profileAction}
+                    >
+                      <i className="fa-solid fa-user text-xs" aria-hidden="true" />
+                      Profilo
+                    </button>
+                    <button
+                      type="button"
+                      className="flex w-full items-center gap-2 rounded-md px-2.5 py-2 text-sm text-[var(--page-fg)] hover:bg-[var(--hover)] disabled:cursor-not-allowed disabled:opacity-60"
+                      onClick={infoAction || undefined}
+                      disabled={!infoAction}
+                    >
+                      <i className="fa-solid fa-circle-info text-xs" aria-hidden="true" />
+                      Informazioni
+                    </button>
+                    <button
+                      type="button"
+                      className="flex w-full items-center gap-2 rounded-md px-2.5 py-2 text-sm text-[var(--page-fg)] hover:bg-rose-600/20 hover:text-rose-400 disabled:cursor-not-allowed disabled:opacity-60"
+                      onClick={logoutAction || undefined}
+                      disabled={!logoutAction}
+                    >
+                      <i className="fa-solid fa-right-from-bracket text-xs" aria-hidden="true" />
+                      Logout
+                    </button>
+                  </div>
+                </div>
+              </div>
               {APP_SECTIONS.map((section) => {
                 const isOpen = openSection === section.title;
                 return (
@@ -405,6 +475,7 @@ export default function AppLayout({
                   </div>
                 );
               })}
+            </div>
             </div>
           </div>
         </div>

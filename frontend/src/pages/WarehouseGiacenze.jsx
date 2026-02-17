@@ -1,4 +1,4 @@
-﻿import { Fragment, useEffect, useMemo, useRef, useState } from "react";
+import { Fragment, useEffect, useMemo, useRef, useState } from "react";
 import AppLayout from "../components/AppLayout.jsx";
 
 const API_BASE = import.meta.env.VITE_API_URL || "http://localhost:3000";
@@ -23,6 +23,43 @@ const normalizeUnit = (value) => {
 };
 
 const DDT_FILE_TYPES = ["ddt", "fattura del vettore", "fattura d'aquisto", "immagine prodotto"];
+const NEW_ARTICLE_TYPE_OPTIONS = ["SERVIZIO", "RICAMBIO", "SISTEMA", "ATTREZZATURA/TOOLS"];
+const NEW_ARTICLE_COST_CENTER_OPTIONS = [
+  "AMMINISTRAZIONE",
+  "CDA",
+  "COMMERCIALE",
+  "INFRASTRUTTURE",
+  "LABORATORIO",
+  "NOLEGGIO OPERATIVO",
+  "SEDE",
+  "SERVICE ECO",
+  "SERVICE RM",
+  "SERVICE RX",
+  "SERVICE TC",
+  "VENDITA CT",
+  "VENDITA ECO",
+  "VENDITA RM",
+  "VENDITA RX"
+];
+const NEW_ARTICLE_UNIT_OPTIONS = ["QT", "LITRI", "KG", "ORE", "METRI"];
+const getInitialNewArticleForm = () => ({
+  descrizione: "",
+  codiceArticolo: "",
+  marca: "",
+  tipo: NEW_ARTICLE_TYPE_OPTIONS[0],
+  unitaMisura: NEW_ARTICLE_UNIT_OPTIONS[0],
+  centroDiCosto: NEW_ARTICLE_COST_CENTER_OPTIONS[0],
+  valorizza: false,
+  ammetteSeriale: false,
+  prezzoVendita: "",
+  costoAcquisto: "",
+  partNumber: "",
+  vendorCode: "",
+  alertGiacenza: false,
+  giacenzaMinima: "",
+  obsoleto: false,
+  note: ""
+});
 
 export default function WarehouseGiacenze() {
   const initialDprRef = useRef(null);
@@ -81,6 +118,9 @@ export default function WarehouseGiacenze() {
   const [caricoSaving, setCaricoSaving] = useState(false);
   const [caricoError, setCaricoError] = useState("");
   const [newArticleOpen, setNewArticleOpen] = useState(false);
+  const [newArticleForm, setNewArticleForm] = useState(getInitialNewArticleForm);
+  const [newArticleSaving, setNewArticleSaving] = useState(false);
+  const [newArticleError, setNewArticleError] = useState("");
   const [expandedRows, setExpandedRows] = useState(() => new Set());
   const [serialsByCode, setSerialsByCode] = useState({});
   const [serialsLoading, setSerialsLoading] = useState({});
@@ -130,6 +170,11 @@ export default function WarehouseGiacenze() {
     const start = (page - 1) * effectiveLimit;
     return sortedItems.slice(start, start + effectiveLimit);
   }, [sortedItems, page, effectiveLimit]);
+
+  const hasInvalidMovementQuantities = useMemo(
+    () => movementItems.some((item) => !Number.isFinite(Number(item?.quantita)) || Number(item.quantita) < 1),
+    [movementItems]
+  );
 
   const fetchData = async () => {
     setLoading(true);
@@ -236,6 +281,12 @@ export default function WarehouseGiacenze() {
       setSelectedMovementItemId(null);
     }
   }, [movementItems, selectedMovementItemId]);
+
+  useEffect(() => {
+    if (!newArticleOpen) return;
+    setNewArticleForm(getInitialNewArticleForm());
+    setNewArticleError("");
+  }, [newArticleOpen]);
 
   useEffect(() => {
     if (!caricoWizardOpen || !supplierComboOpen) return;
@@ -402,6 +453,10 @@ export default function WarehouseGiacenze() {
         quantita: qty,
         unitaMisura: unit,
         seriali: [],
+        seriale: "",
+        scaffale: String(selectedArticle?.scaffale || ""),
+        riga: String(selectedArticle?.riga || ""),
+        colonna: String(selectedArticle?.colonna || ""),
         note: ""
       }
     ]);
@@ -422,10 +477,70 @@ export default function WarehouseGiacenze() {
         quantita: qty,
         unitaMisura: unit,
         seriali: [],
+        seriale: "",
+        scaffale: String(article?.scaffale || ""),
+        riga: String(article?.riga || ""),
+        colonna: String(article?.colonna || ""),
         note: ""
       }
     ]);
     setSelectedMovementItemId(nextId);
+  };
+
+  const updateMovementItemField = (id, field, value) => {
+    setMovementItems((prev) =>
+      prev.map((item) =>
+        item.id === id
+          ? {
+              ...item,
+              [field]: String(value ?? "")
+            }
+          : item
+      )
+    );
+  };
+
+  const updateNewArticleField = (field, value) => {
+    setNewArticleForm((prev) => ({ ...prev, [field]: value }));
+  };
+
+  const saveNewArticle = async () => {
+    const codice = String(newArticleForm.codiceArticolo || "").trim();
+    const descrizione = String(newArticleForm.descrizione || "").trim();
+    const tipo = String(newArticleForm.tipo || "").trim();
+    const centroDiCosto = String(newArticleForm.centroDiCosto || "").trim();
+    if (!codice || !descrizione || !tipo || !centroDiCosto) {
+      setNewArticleError("Compila i campi obbligatori: descrizione, codice articolo, tipo, centro di costo.");
+      return;
+    }
+
+    setNewArticleSaving(true);
+    setNewArticleError("");
+    try {
+      const res = await fetch(`${API_BASE}/api/warehouse/articoli`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          ...newArticleForm,
+          codiceArticolo: codice,
+          descrizione
+        })
+      });
+      if (!res.ok) {
+        const payload = await res.json().catch(() => ({}));
+        throw new Error(payload?.errore || "Errore salvataggio articolo");
+      }
+      const payload = await res.json();
+      if (payload?.articolo) {
+        setSelectedArticle(payload.articolo);
+      }
+      await fetchArticles(articleSearch.trim());
+      setNewArticleOpen(false);
+    } catch (err) {
+      setNewArticleError(err.message || "Errore salvataggio articolo");
+    } finally {
+      setNewArticleSaving(false);
+    }
   };
 
   const removeMovementItemById = (id) => {
@@ -505,6 +620,10 @@ export default function WarehouseGiacenze() {
             quantita: qty,
             unitaMisura: detectedUnit,
             seriali: [],
+            seriale: String(row?.seriale || ""),
+            scaffale: String(row?.scaffale || ""),
+            riga: String(row?.riga || ""),
+            colonna: String(row?.colonna || ""),
             note: String(row?.note || "")
           };
         });
@@ -521,6 +640,10 @@ export default function WarehouseGiacenze() {
 
   const submitCarico = async () => {
     if (!selectedCausale || !selectedSupplier || movementItems.length === 0) return;
+    if (hasInvalidMovementQuantities) {
+      setCaricoError("Quantita non valida: ogni riga deve avere almeno 1.");
+      return;
+    }
     setCaricoSaving(true);
     setCaricoError("");
     try {
@@ -531,7 +654,18 @@ export default function WarehouseGiacenze() {
           causale: selectedCausale,
           dataMovimento: caricoDate,
           fornitore: selectedSupplier,
-          items: movementItems
+          items: movementItems.map((row) => {
+            const seriale = String(row?.seriale || row?.seriali?.[0] || "").trim();
+            return {
+              ...row,
+              seriale,
+              seriali: seriale ? [seriale] : [],
+              scaffale: String(row?.scaffale || ""),
+              riga: String(row?.riga || ""),
+              colonna: String(row?.colonna || ""),
+              note: String(row?.note || "")
+            };
+          })
         })
       });
       if (!res.ok) {
@@ -1415,14 +1549,14 @@ export default function WarehouseGiacenze() {
                         />
                         {articlesLoading ? <span className="ml-2 text-xs text-[var(--muted)]">Caricamento...</span> : null}
                       </div>
-                    <div className="mt-3 h-[42vh] min-h-[240px] max-h-[380px] overflow-auto rounded-md border border-[var(--border)] lg:min-h-0 lg:h-auto lg:max-h-none lg:flex-1">
+                    <div className="warehouse-articles-scroll mt-3 h-[42vh] min-h-[240px] max-h-[380px] overflow-auto rounded-md border border-[var(--border)] pr-2 lg:min-h-0 lg:h-auto lg:max-h-none lg:flex-1">
                         <table className={`table-dense min-w-[460px] w-full ${compactCaricoLayout ? "text-[10px]" : "text-xs"}`}>
                           <thead className={`sticky top-0 z-10 bg-[var(--surface-strong)] uppercase tracking-[0.2em] text-[var(--muted)] ${compactCaricoLayout ? "text-[8px]" : "text-[9px]"}`}>
                             <tr className="text-left">
                               <th className="px-3 py-2">Codice</th>
                               <th className="px-3 py-2">Descrizione</th>
                               <th className="px-3 py-2">U.M.</th>
-                              <th className="px-2 py-2"></th>
+                              <th className="w-12 px-2 py-2 pr-4"></th>
                             </tr>
                           </thead>
                           <tbody>
@@ -1437,7 +1571,7 @@ export default function WarehouseGiacenze() {
                                 <td className={`px-3 py-2 font-semibold ${compactCaricoLayout ? "text-[11px]" : "text-[12px]"}`}>{row.codiceArticolo}</td>
                                 <td className={`px-3 py-2 ${compactCaricoLayout ? "text-[11px]" : "text-[12px]"}`}>{row.descrizione}</td>
                                 <td className={`px-3 py-2 ${compactCaricoLayout ? "text-[11px]" : "text-[12px]"}`}>{row.unitaMisura || "-"}</td>
-                                <td className="px-2 py-2 text-right">
+                                <td className="px-2 py-2 pr-4 text-right">
                                   <button
                                     type="button"
                                     className="h-7 w-7 rounded-md border border-[var(--border)] text-[var(--muted)] opacity-100 transition hover:bg-[var(--hover)] sm:opacity-0 sm:group-hover:opacity-100 sm:focus:opacity-100"
@@ -1518,11 +1652,56 @@ export default function WarehouseGiacenze() {
                                     <span>{row.articolo?.codiceArticolo || "-"}</span>
                                   </div>
                                 </td>
-                                <td className={`px-3 py-2 ${compactCaricoLayout ? "text-[11px]" : "text-[12px]"}`}>{row.seriali?.[0] || "-"}</td>
-                                <td className={`px-3 py-2 ${compactCaricoLayout ? "text-[11px]" : "text-[12px]"}`}>{row.articolo?.scaffale || "-"}</td>
-                                <td className={`px-3 py-2 ${compactCaricoLayout ? "text-[11px]" : "text-[12px]"}`}>{row.articolo?.riga || "-"}</td>
-                                <td className={`px-3 py-2 ${compactCaricoLayout ? "text-[11px]" : "text-[12px]"}`}>{row.articolo?.colonna || "-"}</td>
-                                <td className={`px-3 py-2 text-[var(--muted)] ${compactCaricoLayout ? "text-[11px]" : "text-[12px]"}`}>{row.note || "-"}</td>
+                                <td className="px-2 py-1.5">
+                                  <input
+                                    type="text"
+                                    value={row.seriale || row.seriali?.[0] || ""}
+                                    onChange={(event) => updateMovementItemField(row.id, "seriale", event.target.value)}
+                                    onClick={(event) => event.stopPropagation()}
+                                    className={`w-full min-w-[110px] rounded-md border border-[var(--border)] bg-[var(--surface)] px-2 py-1 outline-none focus-visible:ring-2 focus-visible:ring-emerald-400/60 ${compactCaricoLayout ? "text-[10px]" : "text-[11px]"}`}
+                                    placeholder="-"
+                                  />
+                                </td>
+                                <td className="px-2 py-1.5">
+                                  <input
+                                    type="text"
+                                    value={row.scaffale || ""}
+                                    onChange={(event) => updateMovementItemField(row.id, "scaffale", event.target.value)}
+                                    onClick={(event) => event.stopPropagation()}
+                                    className={`w-full min-w-[90px] rounded-md border border-[var(--border)] bg-[var(--surface)] px-2 py-1 outline-none focus-visible:ring-2 focus-visible:ring-emerald-400/60 ${compactCaricoLayout ? "text-[10px]" : "text-[11px]"}`}
+                                    placeholder="-"
+                                  />
+                                </td>
+                                <td className="px-2 py-1.5">
+                                  <input
+                                    type="text"
+                                    value={row.riga || ""}
+                                    onChange={(event) => updateMovementItemField(row.id, "riga", event.target.value)}
+                                    onClick={(event) => event.stopPropagation()}
+                                    className={`w-full min-w-[80px] rounded-md border border-[var(--border)] bg-[var(--surface)] px-2 py-1 outline-none focus-visible:ring-2 focus-visible:ring-emerald-400/60 ${compactCaricoLayout ? "text-[10px]" : "text-[11px]"}`}
+                                    placeholder="-"
+                                  />
+                                </td>
+                                <td className="px-2 py-1.5">
+                                  <input
+                                    type="text"
+                                    value={row.colonna || ""}
+                                    onChange={(event) => updateMovementItemField(row.id, "colonna", event.target.value)}
+                                    onClick={(event) => event.stopPropagation()}
+                                    className={`w-full min-w-[80px] rounded-md border border-[var(--border)] bg-[var(--surface)] px-2 py-1 outline-none focus-visible:ring-2 focus-visible:ring-emerald-400/60 ${compactCaricoLayout ? "text-[10px]" : "text-[11px]"}`}
+                                    placeholder="-"
+                                  />
+                                </td>
+                                <td className="px-2 py-1.5">
+                                  <input
+                                    type="text"
+                                    value={row.note || ""}
+                                    onChange={(event) => updateMovementItemField(row.id, "note", event.target.value)}
+                                    onClick={(event) => event.stopPropagation()}
+                                    className={`w-full min-w-[180px] rounded-md border border-[var(--border)] bg-[var(--surface)] px-2 py-1 text-[var(--muted)] outline-none focus-visible:ring-2 focus-visible:ring-emerald-400/60 ${compactCaricoLayout ? "text-[10px]" : "text-[11px]"}`}
+                                    placeholder="-"
+                                  />
+                                </td>
                               </tr>
                             ))}
                             {movementItems.length === 0 ? (
@@ -1687,7 +1866,7 @@ export default function WarehouseGiacenze() {
                   <button
                     type="button"
                     onClick={submitCarico}
-                    disabled={caricoSaving || !selectedCausale || !selectedSupplier || movementItems.length === 0}
+                    disabled={caricoSaving || !selectedCausale || !selectedSupplier || movementItems.length === 0 || hasInvalidMovementQuantities}
                     className="rounded-md bg-emerald-500 px-3 py-1.5 text-xs font-semibold text-white hover:bg-emerald-600 disabled:cursor-not-allowed disabled:opacity-60"
                   >
                     {caricoSaving ? "Salvataggio..." : "Conferma carico"}
@@ -1733,6 +1912,8 @@ export default function WarehouseGiacenze() {
                 <span className="text-xs uppercase tracking-[0.2em] text-[var(--muted)]">Descrizione</span>
                 <input
                   type="text"
+                  value={newArticleForm.descrizione}
+                  onChange={(event) => updateNewArticleField("descrizione", event.target.value)}
                   className="mt-2 w-full rounded-md border border-[var(--border)] bg-[var(--surface)] px-3 py-2 text-sm"
                 />
               </label>
@@ -1741,6 +1922,8 @@ export default function WarehouseGiacenze() {
                 <span className="text-xs uppercase tracking-[0.2em] text-[var(--muted)]">Codice articolo</span>
                 <input
                   type="text"
+                  value={newArticleForm.codiceArticolo}
+                  onChange={(event) => updateNewArticleField("codiceArticolo", event.target.value)}
                   className="mt-2 w-full rounded-md border border-[var(--border)] bg-[var(--surface)] px-3 py-2 text-sm"
                 />
               </label>
@@ -1749,41 +1932,74 @@ export default function WarehouseGiacenze() {
                 <span className="text-xs uppercase tracking-[0.2em] text-[var(--muted)]">Marca</span>
                 <input
                   type="text"
+                  value={newArticleForm.marca}
+                  onChange={(event) => updateNewArticleField("marca", event.target.value)}
                   className="mt-2 w-full rounded-md border border-[var(--border)] bg-[var(--surface)] px-3 py-2 text-sm"
                 />
               </label>
 
               <label className="text-sm">
                 <span className="text-xs uppercase tracking-[0.2em] text-[var(--muted)]">Tipo</span>
-                <input
-                  type="text"
+                <select
+                  value={newArticleForm.tipo}
+                  onChange={(event) => updateNewArticleField("tipo", event.target.value)}
                   className="mt-2 w-full rounded-md border border-[var(--border)] bg-[var(--surface)] px-3 py-2 text-sm"
-                />
+                >
+                  {NEW_ARTICLE_TYPE_OPTIONS.map((option) => (
+                    <option key={option} value={option}>
+                      {option}
+                    </option>
+                  ))}
+                </select>
               </label>
 
               <label className="text-sm">
                 <span className="text-xs uppercase tracking-[0.2em] text-[var(--muted)]">Unita di misura</span>
-                <input
-                  type="text"
+                <select
+                  value={newArticleForm.unitaMisura}
+                  onChange={(event) => updateNewArticleField("unitaMisura", event.target.value)}
                   className="mt-2 w-full rounded-md border border-[var(--border)] bg-[var(--surface)] px-3 py-2 text-sm"
-                />
+                >
+                  {NEW_ARTICLE_UNIT_OPTIONS.map((option) => (
+                    <option key={option} value={option}>
+                      {option}
+                    </option>
+                  ))}
+                </select>
               </label>
 
               <label className="text-sm">
                 <span className="text-xs uppercase tracking-[0.2em] text-[var(--muted)]">Centro di costo</span>
-                <input
-                  type="text"
+                <select
+                  value={newArticleForm.centroDiCosto}
+                  onChange={(event) => updateNewArticleField("centroDiCosto", event.target.value)}
                   className="mt-2 w-full rounded-md border border-[var(--border)] bg-[var(--surface)] px-3 py-2 text-sm"
-                />
+                >
+                  {NEW_ARTICLE_COST_CENTER_OPTIONS.map((option) => (
+                    <option key={option} value={option}>
+                      {option}
+                    </option>
+                  ))}
+                </select>
               </label>
 
               <div className="flex items-center gap-4 text-sm">
                 <label className="flex items-center gap-2">
-                  <input type="checkbox" className="h-4 w-4" />
+                  <input
+                    type="checkbox"
+                    checked={newArticleForm.valorizza}
+                    onChange={(event) => updateNewArticleField("valorizza", event.target.checked)}
+                    className="h-4 w-4"
+                  />
                   <span>Valorizza</span>
                 </label>
                 <label className="flex items-center gap-2">
-                  <input type="checkbox" className="h-4 w-4" />
+                  <input
+                    type="checkbox"
+                    checked={newArticleForm.ammetteSeriale}
+                    onChange={(event) => updateNewArticleField("ammetteSeriale", event.target.checked)}
+                    className="h-4 w-4"
+                  />
                   <span>Ammette seriale</span>
                 </label>
               </div>
@@ -1792,6 +2008,8 @@ export default function WarehouseGiacenze() {
                 <span className="text-xs uppercase tracking-[0.2em] text-[var(--muted)]">Prezzo di vendita</span>
                 <input
                   type="number"
+                  value={newArticleForm.prezzoVendita}
+                  onChange={(event) => updateNewArticleField("prezzoVendita", event.target.value)}
                   className="mt-2 w-full rounded-md border border-[var(--border)] bg-[var(--surface)] px-3 py-2 text-sm"
                 />
               </label>
@@ -1800,6 +2018,8 @@ export default function WarehouseGiacenze() {
                 <span className="text-xs uppercase tracking-[0.2em] text-[var(--muted)]">Costo di acquisto</span>
                 <input
                   type="number"
+                  value={newArticleForm.costoAcquisto}
+                  onChange={(event) => updateNewArticleField("costoAcquisto", event.target.value)}
                   className="mt-2 w-full rounded-md border border-[var(--border)] bg-[var(--surface)] px-3 py-2 text-sm"
                 />
               </label>
@@ -1808,6 +2028,8 @@ export default function WarehouseGiacenze() {
                 <span className="text-xs uppercase tracking-[0.2em] text-[var(--muted)]">Part number</span>
                 <input
                   type="text"
+                  value={newArticleForm.partNumber}
+                  onChange={(event) => updateNewArticleField("partNumber", event.target.value)}
                   className="mt-2 w-full rounded-md border border-[var(--border)] bg-[var(--surface)] px-3 py-2 text-sm"
                 />
               </label>
@@ -1816,6 +2038,8 @@ export default function WarehouseGiacenze() {
                 <span className="text-xs uppercase tracking-[0.2em] text-[var(--muted)]">Vendor code</span>
                 <input
                   type="text"
+                  value={newArticleForm.vendorCode}
+                  onChange={(event) => updateNewArticleField("vendorCode", event.target.value)}
                   className="mt-2 w-full rounded-md border border-[var(--border)] bg-[var(--surface)] px-3 py-2 text-sm"
                 />
               </label>
@@ -1823,13 +2047,20 @@ export default function WarehouseGiacenze() {
               <div className="rounded-md border border-[var(--border)] bg-[var(--surface)] p-3">
                 <p className="text-xs uppercase tracking-[0.2em] text-[var(--muted)]">Alert giacenza minima</p>
                 <div className="mt-2 flex items-center gap-2 text-sm">
-                  <input type="checkbox" className="h-4 w-4" />
+                  <input
+                    type="checkbox"
+                    checked={newArticleForm.alertGiacenza}
+                    onChange={(event) => updateNewArticleField("alertGiacenza", event.target.checked)}
+                    className="h-4 w-4"
+                  />
                   <span>Attiva alert per questo codice</span>
                 </div>
                 <label className="mt-3 text-sm">
                   <span className="text-xs uppercase tracking-[0.2em] text-[var(--muted)]">Soglia alert</span>
                   <input
                     type="number"
+                    value={newArticleForm.giacenzaMinima}
+                    onChange={(event) => updateNewArticleField("giacenzaMinima", event.target.value)}
                     className="mt-2 w-full rounded-md border border-[var(--border)] bg-[var(--surface)] px-3 py-2 text-sm"
                   />
                 </label>
@@ -1838,7 +2069,12 @@ export default function WarehouseGiacenze() {
               <div className="rounded-md border border-[var(--border)] bg-[var(--surface)] p-3">
                 <p className="text-xs uppercase tracking-[0.2em] text-[var(--muted)]">Obsoleto</p>
                 <label className="mt-2 flex items-center gap-2 text-sm">
-                  <input type="checkbox" className="h-4 w-4" />
+                  <input
+                    type="checkbox"
+                    checked={newArticleForm.obsoleto}
+                    onChange={(event) => updateNewArticleField("obsoleto", event.target.checked)}
+                    className="h-4 w-4"
+                  />
                   <span>Marca articolo come obsoleto</span>
                 </label>
               </div>
@@ -1855,11 +2091,14 @@ export default function WarehouseGiacenze() {
               </button>
               <button
                 type="button"
-                className="rounded-md bg-emerald-500 px-4 py-2 text-sm font-semibold text-white hover:bg-emerald-600"
+                onClick={saveNewArticle}
+                disabled={newArticleSaving}
+                className="rounded-md bg-emerald-500 px-4 py-2 text-sm font-semibold text-white hover:bg-emerald-600 disabled:cursor-not-allowed disabled:opacity-60"
               >
-                Salva
+                {newArticleSaving ? "Salvataggio..." : "Salva"}
               </button>
             </div>
+            {newArticleError ? <p className="px-4 pb-4 text-sm text-rose-500 sm:px-6">{newArticleError}</p> : null}
           </div>
         </div>
       ) : null}

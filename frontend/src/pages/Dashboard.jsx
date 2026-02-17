@@ -79,7 +79,7 @@ const costCenterData = {
   ]
 };
 
-const INACTIVITY_MS = 60 * 1000;
+const INACTIVITY_MS = 30 * 60 * 1000;
 const COUNTDOWN_SECONDS = 15;
 
 export default function DashboardPage() {
@@ -183,7 +183,7 @@ export default function DashboardPage() {
         pageTitle="Dashboard HTS Med"
         brandContext="Dashboard"
         defaultOpenSection="ANALISI"
-        mainClassName="flex-1 space-y-6 px-6 py-6"
+        mainClassName="flex-1 space-y-6 px-3 py-4 sm:px-6 sm:py-6"
         logoutAction={logoutNow}
       >
         <section className="grid gap-4 grid-cols-2 md:grid-cols-2 xl:grid-cols-4">
@@ -249,7 +249,7 @@ export default function DashboardPage() {
                 <div className="text-sm text-[var(--muted)]">EUR 1.482.900</div>
               </div>
             </div>
-            <div className="mt-6 h-80">
+            <div className="mt-6 h-72 sm:h-80">
               <ResponsiveContainer width="100%" height="100%">
                 <LineChart data={revenueChartData} margin={{ top: 10, right: 16, left: 0, bottom: 0 }}>
                   <defs>
@@ -330,8 +330,8 @@ export default function DashboardPage() {
                 </select>
               </div>
             </div>
-            <div className="mt-6 flex items-center gap-6">
-              <div className="h-72 w-72">
+            <div className="mt-6 flex flex-col gap-4 overflow-hidden sm:gap-6 lg:flex-row lg:items-center">
+              <div className="h-64 w-full min-w-0 sm:h-72 lg:w-72 lg:shrink-0">
                 <ResponsiveContainer width="100%" height="100%">
                   <RadarChart data={costChartData}>
                     <PolarGrid stroke="currentColor" strokeOpacity={0.2} />
@@ -351,7 +351,7 @@ export default function DashboardPage() {
                   </RadarChart>
                 </ResponsiveContainer>
               </div>
-              <div className="flex-1 space-y-3 text-sm">
+              <div className="w-full min-w-0 flex-1 space-y-3 text-sm">
                 {costCenterData[costPeriod].map((item) => (
                   <div key={item.label} className="flex items-center justify-between">
                     <span className="text-[var(--page-fg)]">{item.label}</span>
