@@ -18,6 +18,29 @@ const parseBool = (value, fallback = false) => {
   return fallback;
 };
 
+let ensureIndexesPromise = null;
+
+const sameIndexKey = (a = {}, b = {}) => {
+  const aEntries = Object.entries(a);
+  const bEntries = Object.entries(b);
+  if (aEntries.length !== bEntries.length) return false;
+  return aEntries.every(([k, v], idx) => {
+    const [bk, bv] = bEntries[idx] || [];
+    return bk === k && bv === v;
+  });
+};
+
+const ensureCollectionIndexes = async (db, collectionName, indexSpecs) => {
+  const collection = db.collection(collectionName);
+  const existing = await collection.indexes();
+  for (const spec of indexSpecs) {
+    const alreadyExists = existing.some((idx) => sameIndexKey(idx.key, spec.key));
+    if (!alreadyExists) {
+      await collection.createIndex(spec.key, spec.options || {});
+    }
+  }
+};
+
 const buildWarehouseCacheRowsPipeline = (codes) => [
   { $addFields: { codiceTrim: { $trim: { input: "$Codice Articolo" } } } },
   { $match: { codiceTrim: { $in: codes } } },
@@ -128,13 +151,7 @@ const getActiveSerialSet = async (db, pairs) => {
   const rows = await db
     .collection("Allocazione Magazzino")
     .aggregate([
-      {
-        $addFields: {
-          codice: { $trim: { input: { $ifNull: ["$cod_articolo", ""] } } },
-          seriale: { $trim: { input: { $ifNull: ["$Seriale", ""] } } }
-        }
-      },
-      { $match: { codice: { $in: codes }, seriale: { $in: serials, $ne: "" } } },
+      { $match: { cod_articolo: { $in: codes }, Seriale: { $in: serials } } },
       {
         $lookup: {
           from: "Movimenti di magazzino",
@@ -155,8 +172,8 @@ const getActiveSerialSet = async (db, pairs) => {
       { $unwind: { path: "$causale", preserveNullAndEmptyArrays: true } },
       {
         $project: {
-          codice: 1,
-          seriale: 1,
+          codice: "$cod_articolo",
+          seriale: "$Seriale",
           azioneFisica: { $ifNull: ["$causale.Azione su Giacenza Fisica", 0] },
           dataMovimento: "$mov.Data",
           codMov: "$mov.cod"
@@ -177,19 +194,56 @@ const getActiveSerialSet = async (db, pairs) => {
 };
 
 const ensureIndexes = async () => {
+  if (ensureIndexesPromise) return ensureIndexesPromise;
   const db = getWarehouseDb();
-  await Promise.all([
-    db.collection("warehouse_giacenze").createIndex({ codiceArticolo: 1 }),
-    db.collection("warehouse_giacenze").createIndex({ descrizione: 1 }),
-    db.collection("warehouse_giacenze").createIndex({ giacenzaFisica: 1 }),
-    db.collection("warehouse_giacenze").createIndex({ giacenzaMinima: 1 }),
-    db.collection("warehouse_giacenze").createIndex({ alertGiacenza: 1 })
-  ]);
+  ensureIndexesPromise = Promise.all([
+    ensureCollectionIndexes(db, "warehouse_giacenze", [
+      { key: { codiceArticolo: 1 } },
+      { key: { descrizione: 1 } },
+      { key: { giacenzaFisica: 1 } },
+      { key: { giacenzaMinima: 1 } },
+      { key: { alertGiacenza: 1 } }
+    ]),
+    ensureCollectionIndexes(db, "Codici_di_magazzino", [
+      { key: { "Codice Articolo": 1 } },
+      { key: { Descrizione: 1 } }
+    ]),
+    ensureCollectionIndexes(db, "Cli_For", [
+      { key: { Tipo: 1, Nominativo: 1 } },
+      { key: { Nominativo: 1 } },
+      { key: { PIVA: 1 } }
+    ]),
+    ensureCollectionIndexes(db, "Causali di magazzino", [
+      { key: { Nascondi: 1 } },
+      { key: { "Azione su Giacenza Fisica": 1 } }
+    ]),
+    ensureCollectionIndexes(db, "Movimenti di magazzino", [
+      { key: { Cod_Articolo: 1 } },
+      { key: { Cod_Causale: 1 } },
+      { key: { Data: -1 } }
+    ]),
+    ensureCollectionIndexes(db, "Allocazione Magazzino", [
+      { key: { cod_movimento: 1 } },
+      { key: { cod_articolo: 1 } },
+      { key: { cod_articolo: 1, Seriale: 1 } }
+    ])
+  ]).catch((error) => {
+    ensureIndexesPromise = null;
+    throw error;
+  });
+  return ensureIndexesPromise;
 };
+
+const ensureIndexesInBackground = () => {
+  ensureIndexes().catch((error) => {
+    console.warn("Indice magazzino non inizializzato:", error.message);
+  });
+};
+ensureIndexesInBackground();
 
 router.get("/giacenze", async (req, res) => {
   try {
-    await ensureIndexes();
+    ensureIndexesInBackground();
 
     const db = getWarehouseDb();
     const search = String(req.query.search || "").trim();
@@ -233,6 +287,7 @@ router.get("/giacenze", async (req, res) => {
 
 router.get("/giacenze/seriali", async (req, res) => {
   try {
+    ensureIndexesInBackground();
     const db = getWarehouseDb();
     const codice = String(req.query.codice || "").trim();
     if (!codice) {
@@ -315,6 +370,7 @@ router.get("/giacenze/seriali", async (req, res) => {
 
 router.get("/causali", async (req, res) => {
   try {
+    ensureIndexesInBackground();
     const db = getWarehouseDb();
     const tipo = String(req.query.tipo || "").toLowerCase();
     const soloNonNascoste = String(req.query.soloNonNascoste || "1") === "1";
@@ -368,6 +424,7 @@ router.get("/causali", async (req, res) => {
 
 router.get("/articoli", async (req, res) => {
   try {
+    ensureIndexesInBackground();
     const db = getWarehouseDb();
     const search = String(req.query.search || "").trim();
     const limit = Math.min(Math.max(parseInt(req.query.limit || "200", 10), 10), 2000);
@@ -408,6 +465,7 @@ router.get("/articoli", async (req, res) => {
 
 router.get("/fornitori", async (req, res) => {
   try {
+    ensureIndexesInBackground();
     const db = getWarehouseDb();
     const search = String(req.query.search || "").trim();
     const tipo = String(req.query.tipo || "fornitori").toLowerCase();
@@ -451,6 +509,7 @@ router.get("/fornitori", async (req, res) => {
 
 router.post("/articoli", async (req, res) => {
   try {
+    ensureIndexesInBackground();
     const db = getWarehouseDb();
     const payload = req.body || {};
 
@@ -550,6 +609,7 @@ router.post("/articoli", async (req, res) => {
 
 router.post("/carico", async (req, res) => {
   try {
+    ensureIndexesInBackground();
     const db = getWarehouseDb();
     const { causale, dataMovimento, fornitore, items } = req.body || {};
     if (!causale || !dataMovimento || !Array.isArray(items) || items.length === 0) {

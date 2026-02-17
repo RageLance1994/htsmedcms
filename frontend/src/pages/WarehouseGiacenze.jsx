@@ -1,4 +1,4 @@
-import { Fragment, useEffect, useMemo, useRef, useState } from "react";
+import { Fragment, memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import AppLayout from "../components/AppLayout.jsx";
 
 const API_BASE = import.meta.env.VITE_API_URL || "http://localhost:3000";
@@ -61,11 +61,88 @@ const getInitialNewArticleForm = () => ({
   note: ""
 });
 
+const ArticleCatalogRow = memo(function ArticleCatalogRow({
+  row,
+  isActive,
+  compactCaricoLayout,
+  quantity,
+  onSelect,
+  onDecrementQty,
+  onIncrementQty,
+  onQuantityInputChange,
+  onAdd
+}) {
+  return (
+    <tr
+      className={`group border-t border-[var(--border)] ${isActive ? "bg-emerald-500/10" : ""}`}
+      onClick={() => onSelect(row)}
+    >
+      <td className={`px-3 py-2 font-semibold ${compactCaricoLayout ? "text-[11px]" : "text-[12px]"}`}>{row.codiceArticolo}</td>
+      <td className={`px-3 py-2 ${compactCaricoLayout ? "text-[11px]" : "text-[12px]"}`}>{row.descrizione}</td>
+      <td className={`px-3 py-2 ${compactCaricoLayout ? "text-[11px]" : "text-[12px]"}`}>{row.unitaMisura || "-"}</td>
+      <td className="px-2 py-2 pr-6 text-right">
+        <div className="flex items-center justify-end gap-1">
+          <div
+            className={`hidden items-center gap-1 transition sm:flex ${
+              isActive ? "sm:opacity-100" : "sm:opacity-0 sm:group-hover:opacity-100 sm:focus-within:opacity-100"
+            }`}
+          >
+            <button
+              type="button"
+              className="h-7 w-7 rounded-md border border-[var(--border)] text-[var(--muted)] hover:bg-[var(--hover)]"
+              aria-label={`Riduci quantità per ${row.codiceArticolo}`}
+              onClick={(event) => {
+                event.stopPropagation();
+                onDecrementQty(row.codiceArticolo);
+              }}
+            >
+              <i className="fa-solid fa-minus text-[9px]" aria-hidden="true" />
+            </button>
+            <input
+              type="number"
+              min="1"
+              value={quantity}
+              onClick={(event) => event.stopPropagation()}
+              onChange={(event) => onQuantityInputChange(row.codiceArticolo, event.target.value)}
+              className="h-7 w-11 rounded-md border border-[var(--border)] bg-[var(--surface)] px-1 text-center text-[11px] font-semibold outline-none focus-visible:ring-2 focus-visible:ring-emerald-400/60"
+              aria-label={`Quantità da caricare per ${row.codiceArticolo}`}
+            />
+            <button
+              type="button"
+              className="h-7 w-7 rounded-md border border-[var(--border)] text-[var(--muted)] hover:bg-[var(--hover)]"
+              aria-label={`Aumenta quantità per ${row.codiceArticolo}`}
+              onClick={(event) => {
+                event.stopPropagation();
+                onIncrementQty(row.codiceArticolo);
+              }}
+            >
+              <i className="fa-solid fa-plus text-[9px]" aria-hidden="true" />
+            </button>
+          </div>
+          <button
+            type="button"
+            className={`h-7 w-7 rounded-md border border-[var(--border)] text-[var(--muted)] opacity-100 transition hover:bg-[var(--hover)] ${
+              isActive ? "sm:opacity-100" : "sm:opacity-0 sm:group-hover:opacity-100 sm:focus:opacity-100"
+            }`}
+            aria-label="Aggiungi riga movimento"
+            onClick={(event) => {
+              event.stopPropagation();
+              onAdd(row, quantity);
+            }}
+          >
+            <i className="fa-solid fa-arrow-down text-[11px] sm:hidden" aria-hidden="true" />
+            <i className="fa-solid fa-arrow-right hidden text-[11px] sm:inline-block" aria-hidden="true" />
+          </button>
+        </div>
+      </td>
+    </tr>
+  );
+});
+
 export default function WarehouseGiacenze() {
   const initialDprRef = useRef(null);
   const [items, setItems] = useState([]);
   const [page, setPage] = useState(1);
-  const [search, setSearch] = useState("");
   const [debouncedSearch, setDebouncedSearch] = useState("");
   const [alertsOnly, setAlertsOnly] = useState(false);
   const [loading, setLoading] = useState(false);
@@ -76,6 +153,10 @@ export default function WarehouseGiacenze() {
   const movimentiBtnRef = useRef(null);
   const strumentiBtnRef = useRef(null);
   const supplierComboRef = useRef(null);
+  const mainSearchInputRef = useRef(null);
+  const articleSearchInputRef = useRef(null);
+  const mainSearchDebounceRef = useRef(null);
+  const articleSearchDebounceRef = useRef(null);
   const supplierDefaultedRef = useRef(false);
   const [menuPos, setMenuPos] = useState({ left: 0, top: 0, width: 0 });
   const [rowMenu, setRowMenu] = useState({ open: false, x: 0, y: 0, item: null });
@@ -101,6 +182,7 @@ export default function WarehouseGiacenze() {
   const [articles, setArticles] = useState([]);
   const [articlesLoading, setArticlesLoading] = useState(false);
   const [selectedArticle, setSelectedArticle] = useState(null);
+  const [articleRowQuantities, setArticleRowQuantities] = useState({});
   const [entryQty, setEntryQty] = useState(1);
   const [entryUnit, setEntryUnit] = useState("QT");
   const [movementItems, setMovementItems] = useState([]);
@@ -211,12 +293,27 @@ export default function WarehouseGiacenze() {
     }
   };
 
-  useEffect(() => {
-    const timer = setTimeout(() => {
-      setDebouncedSearch(search);
-    }, 450);
-    return () => clearTimeout(timer);
-  }, [search]);
+  const handleMainSearchInput = (event) => {
+    const next = String(event.target.value || "");
+    if (mainSearchDebounceRef.current) {
+      clearTimeout(mainSearchDebounceRef.current);
+    }
+    mainSearchDebounceRef.current = setTimeout(() => {
+      setDebouncedSearch(next);
+      mainSearchDebounceRef.current = null;
+    }, 168);
+  };
+
+  const handleArticleSearchInput = (event) => {
+    const next = String(event.target.value || "");
+    if (articleSearchDebounceRef.current) {
+      clearTimeout(articleSearchDebounceRef.current);
+    }
+    articleSearchDebounceRef.current = setTimeout(() => {
+      setArticleSearch(next);
+      articleSearchDebounceRef.current = null;
+    }, 168);
+  };
 
   useEffect(() => {
     if (!caricoWizardOpen) return;
@@ -230,11 +327,7 @@ export default function WarehouseGiacenze() {
   useEffect(() => {
     if (!caricoWizardOpen) return;
     const term = articleSearch.trim();
-    if (!term) return;
-    const timer = setTimeout(() => {
-      fetchArticles(term);
-    }, 350);
-    return () => clearTimeout(timer);
+    fetchArticles(term);
   }, [articleSearch, caricoWizardOpen]);
 
   useEffect(() => {
@@ -257,6 +350,9 @@ export default function WarehouseGiacenze() {
       setArticles([]);
       setSupplierSearch("");
       setArticleSearch("");
+      if (articleSearchInputRef.current) {
+        articleSearchInputRef.current.value = "";
+      }
       return;
     }
     if (!suppliers.length && !supplierSearch.trim()) {
@@ -266,6 +362,13 @@ export default function WarehouseGiacenze() {
       fetchArticles("");
     }
   }, [caricoWizardOpen, suppliers.length, articles.length]);
+
+  useEffect(() => {
+    return () => {
+      if (mainSearchDebounceRef.current) clearTimeout(mainSearchDebounceRef.current);
+      if (articleSearchDebounceRef.current) clearTimeout(articleSearchDebounceRef.current);
+    };
+  }, []);
 
   useEffect(() => {
     if (selectedArticle?.unitaMisura) {
@@ -463,10 +566,10 @@ export default function WarehouseGiacenze() {
     setSelectedMovementItemId(nextId);
   };
 
-  const addMovementItemFromArticle = (article) => {
+  const addMovementItemFromArticle = useCallback((article, forcedQty = 1) => {
     if (!article) return;
     setSelectedArticle(article);
-    const qty = 1;
+    const qty = Math.max(parseInt(forcedQty, 10) || 1, 1);
     const unit = normalizeUnit(article?.unitaMisura || entryUnit || "QT");
     const nextId = `${article.codiceArticolo}-${Date.now()}`;
     setMovementItems((prev) => [
@@ -485,7 +588,35 @@ export default function WarehouseGiacenze() {
       }
     ]);
     setSelectedMovementItemId(nextId);
+  }, [entryUnit]);
+
+  const getArticleRowQuantity = (codiceArticolo) => {
+    const qty = Number(articleRowQuantities[codiceArticolo]);
+    return Number.isFinite(qty) && qty >= 1 ? Math.floor(qty) : 1;
   };
+
+  const setArticleRowQuantity = useCallback((codiceArticolo, value) => {
+    if (!codiceArticolo) return;
+    const qty = Math.max(parseInt(value, 10) || 1, 1);
+    setArticleRowQuantities((prev) => ({ ...prev, [codiceArticolo]: qty }));
+  }, []);
+
+  const bumpArticleRowQuantity = useCallback((codiceArticolo, delta) => {
+    const current = getArticleRowQuantity(codiceArticolo);
+    setArticleRowQuantity(codiceArticolo, current + delta);
+  }, [articleRowQuantities, setArticleRowQuantity]);
+
+  const handleSelectArticle = useCallback((article) => {
+    setSelectedArticle(article);
+  }, []);
+
+  const handleDecrementArticleRowQuantity = useCallback((codiceArticolo) => {
+    bumpArticleRowQuantity(codiceArticolo, -1);
+  }, [bumpArticleRowQuantity]);
+
+  const handleIncrementArticleRowQuantity = useCallback((codiceArticolo) => {
+    bumpArticleRowQuantity(codiceArticolo, 1);
+  }, [bumpArticleRowQuantity]);
 
   const updateMovementItemField = (id, field, value) => {
     setMovementItems((prev) =>
@@ -871,8 +1002,9 @@ export default function WarehouseGiacenze() {
                 <i className="fa-solid fa-magnifying-glass text-[12px] text-[var(--muted)]" aria-hidden="true" />
                 <input
                   type="text"
-                  value={search}
-                  onChange={(event) => setSearch(event.target.value)}
+                  ref={mainSearchInputRef}
+                  defaultValue=""
+                  onChange={handleMainSearchInput}
                   placeholder="Codice articolo o descrizione"
                   className="ml-3 w-full bg-transparent text-sm outline-none"
                 />
@@ -999,11 +1131,11 @@ export default function WarehouseGiacenze() {
 
         <div className="mt-4 min-h-0 flex-1 overflow-auto rounded-md border border-[var(--border)]">
           <div className="w-full">
-            <table className="warehouse-table table-dense w-full border-collapse text-sm">
+            <table className="warehouse-table table-dense w-full table-fixed border-collapse text-sm">
               <thead className="sticky top-0 z-10 bg-[var(--surface-strong)]">
                 <tr className="text-left text-[10px] uppercase tracking-[0.2em] text-[var(--muted)]">
                   <th className="h-10 px-3 w-10"></th>
-                  <th className="h-10 px-3">
+                  <th className="h-10 w-[150px] px-3">
                     <button
                       type="button"
                       className="flex items-center gap-2 text-[10px] uppercase tracking-[0.2em] text-[var(--muted)]"
@@ -1013,7 +1145,7 @@ export default function WarehouseGiacenze() {
                       <i className={`fa-solid ${sortIndicator("codiceArticolo")} text-[10px]`} aria-hidden="true" />
                     </button>
                   </th>
-                  <th className="h-10 px-3">
+                  <th className="h-10 w-[420px] px-3">
                     <button
                       type="button"
                       className="flex items-center gap-2 text-[10px] uppercase tracking-[0.2em] text-[var(--muted)]"
@@ -1126,7 +1258,11 @@ export default function WarehouseGiacenze() {
                           ) : null}
                         </td>
                         <td className="px-3 py-2 font-semibold">{item.codiceArticolo}</td>
-                        <td className="px-3 py-2">{item.descrizione}</td>
+                        <td className="px-3 py-2">
+                          <span className="block truncate" title={item.descrizione || ""}>
+                            {item.descrizione}
+                          </span>
+                        </td>
                         <td className="px-3 py-2">{formatNumber(item.giacenzaFiscale)}</td>
                         <td className="px-3 py-2">{formatNumber(item.giacenzaFisica)}</td>
                         <td className="px-3 py-2">{item.unitaMisura || "-"}</td>
@@ -1542,8 +1678,9 @@ export default function WarehouseGiacenze() {
                       <div className="mt-2 flex items-center rounded-md border border-[var(--border)] bg-[var(--surface)] px-3 py-2">
                         <i className="fa-solid fa-magnifying-glass text-[12px] text-[var(--muted)]" aria-hidden="true" />
                         <input
-                          value={articleSearch}
-                          onChange={(event) => setArticleSearch(event.target.value)}
+                          ref={articleSearchInputRef}
+                          defaultValue=""
+                          onChange={handleArticleSearchInput}
                           placeholder="Cerca per codice o descrizione"
                           className="ml-3 w-full bg-transparent text-sm outline-none"
                         />
@@ -1556,37 +1693,24 @@ export default function WarehouseGiacenze() {
                               <th className="px-3 py-2">Codice</th>
                               <th className="px-3 py-2">Descrizione</th>
                               <th className="px-3 py-2">U.M.</th>
-                              <th className="w-12 px-2 py-2 pr-4"></th>
+                              <th className="w-12 px-2 py-2 pr-6 sm:w-[170px]"></th>
                             </tr>
                           </thead>
                           <tbody>
                             {articles.map((row) => (
-                              <tr
-                                key={row.codiceArticolo}
-                                className={`group border-t border-[var(--border)] ${
-                                  selectedArticle?.codiceArticolo === row.codiceArticolo ? "bg-emerald-500/10" : ""
-                                }`}
-                                onClick={() => setSelectedArticle(row)}
-                              >
-                                <td className={`px-3 py-2 font-semibold ${compactCaricoLayout ? "text-[11px]" : "text-[12px]"}`}>{row.codiceArticolo}</td>
-                                <td className={`px-3 py-2 ${compactCaricoLayout ? "text-[11px]" : "text-[12px]"}`}>{row.descrizione}</td>
-                                <td className={`px-3 py-2 ${compactCaricoLayout ? "text-[11px]" : "text-[12px]"}`}>{row.unitaMisura || "-"}</td>
-                                <td className="px-2 py-2 pr-4 text-right">
-                                  <button
-                                    type="button"
-                                    className="h-7 w-7 rounded-md border border-[var(--border)] text-[var(--muted)] opacity-100 transition hover:bg-[var(--hover)] sm:opacity-0 sm:group-hover:opacity-100 sm:focus:opacity-100"
-                                    aria-label="Aggiungi riga movimento"
-                                    onClick={(event) => {
-                                      event.stopPropagation();
-                                      addMovementItemFromArticle(row);
-                                    }}
-                                  >
-                                    <i className="fa-solid fa-arrow-down text-[11px] sm:hidden" aria-hidden="true" />
-                                    <i className="fa-solid fa-arrow-right hidden text-[11px] sm:inline-block" aria-hidden="true" />
-                                  </button>
-                                </td>
-                              </tr>
-                            ))}
+  <ArticleCatalogRow
+    key={row.codiceArticolo}
+    row={row}
+    isActive={selectedArticle?.codiceArticolo === row.codiceArticolo}
+    compactCaricoLayout={compactCaricoLayout}
+    quantity={getArticleRowQuantity(row.codiceArticolo)}
+    onSelect={handleSelectArticle}
+    onDecrementQty={(codiceArticolo) => bumpArticleRowQuantity(codiceArticolo, -1)}
+    onIncrementQty={(codiceArticolo) => bumpArticleRowQuantity(codiceArticolo, 1)}
+    onQuantityInputChange={setArticleRowQuantity}
+    onAdd={addMovementItemFromArticle}
+  />
+))}
                             {!articlesLoading && articles.length === 0 ? (
                               <tr>
                                 <td colSpan={4} className="px-3 py-6 text-center text-xs text-[var(--muted)]">
@@ -1601,7 +1725,7 @@ export default function WarehouseGiacenze() {
 
                     <div className="flex min-h-[300px] min-w-0 flex-col rounded-lg bg-[var(--surface)] p-3 sm:p-4 lg:min-h-0">
                       <div className="flex items-center justify-between">
-                        <p className="text-xs uppercase tracking-[0.2em] text-[var(--muted)]">Righe movimento</p>
+                        <p className="text-xs uppercase tracking-[0.2em] text-[var(--muted)]">Magazzino</p>
                         <span className="text-xs text-[var(--muted)]">{movementItems.length} righe</span>
                       </div>
                       <div className="mt-2 flex items-center rounded-md border border-[var(--border)] bg-[var(--surface)] px-3 py-2 opacity-70">
@@ -1615,10 +1739,12 @@ export default function WarehouseGiacenze() {
                         />
                       </div>
                       <div className="mt-3 h-[42vh] min-h-[240px] max-h-[380px] overflow-auto rounded-md border border-[var(--border)] lg:min-h-0 lg:h-auto lg:max-h-none lg:flex-1">
-                        <table className={`table-dense min-w-[760px] w-full ${compactCaricoLayout ? "text-[10px]" : "text-xs"}`}>
+                        <table className={`table-dense min-w-[920px] w-full ${compactCaricoLayout ? "text-[10px]" : "text-xs"}`}>
                           <thead className={`sticky top-0 bg-[var(--surface-strong)] uppercase tracking-[0.2em] text-[var(--muted)] ${compactCaricoLayout ? "text-[8px]" : "text-[9px]"}`}>
                             <tr className="text-left">
                               <th className="px-3 py-2">Codice articolo</th>
+                              <th className="px-3 py-2">Quantita</th>
+                              <th className="px-3 py-2">U.M.</th>
                               <th className="px-3 py-2">Seriale</th>
                               <th className="px-3 py-2">Scaffale</th>
                               <th className="px-3 py-2">Riga</th>
@@ -1654,13 +1780,39 @@ export default function WarehouseGiacenze() {
                                 </td>
                                 <td className="px-2 py-1.5">
                                   <input
-                                    type="text"
-                                    value={row.seriale || row.seriali?.[0] || ""}
-                                    onChange={(event) => updateMovementItemField(row.id, "seriale", event.target.value)}
+                                    type="number"
+                                    min="1"
+                                    step="1"
+                                    value={row.quantita ?? 1}
+                                    onChange={(event) => updateMovementItemField(row.id, "quantita", event.target.value)}
                                     onClick={(event) => event.stopPropagation()}
-                                    className={`w-full min-w-[110px] rounded-md border border-[var(--border)] bg-[var(--surface)] px-2 py-1 outline-none focus-visible:ring-2 focus-visible:ring-emerald-400/60 ${compactCaricoLayout ? "text-[10px]" : "text-[11px]"}`}
-                                    placeholder="-"
+                                    className={`w-full min-w-[80px] rounded-md border border-[var(--border)] bg-[var(--surface)] px-2 py-1 outline-none focus-visible:ring-2 focus-visible:ring-emerald-400/60 ${compactCaricoLayout ? "text-[10px]" : "text-[11px]"}`}
+                                    placeholder="1"
                                   />
+                                </td>
+                                <td className={`px-3 py-2 ${compactCaricoLayout ? "text-[11px]" : "text-[12px]"}`}>
+                                  {row.unitaMisura || row.articolo?.unitaMisura || "-"}
+                                </td>
+                                <td className="px-2 py-1.5">
+                                  <div className="relative min-w-[138px]">
+                                    <input
+                                      type="text"
+                                      value={row.seriale || row.seriali?.[0] || ""}
+                                      onChange={(event) => updateMovementItemField(row.id, "seriale", event.target.value)}
+                                      onClick={(event) => event.stopPropagation()}
+                                      className={`w-full rounded-md border border-[var(--border)] bg-[var(--surface)] px-2 py-1 pr-8 outline-none focus-visible:ring-2 focus-visible:ring-emerald-400/60 ${compactCaricoLayout ? "text-[10px]" : "text-[11px]"}`}
+                                      placeholder="-"
+                                    />
+                                    <button
+                                      type="button"
+                                      onClick={(event) => event.stopPropagation()}
+                                      className="absolute right-1 top-1/2 inline-flex h-[18px] w-[18px] -translate-y-1/2 items-center justify-center rounded-sm text-[var(--muted)] hover:bg-[var(--hover)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald-400/60"
+                                      aria-label="Scansiona seriale"
+                                      title="Scansiona seriale"
+                                    >
+                                      <i className="fa-solid fa-barcode text-[11px]" aria-hidden="true" />
+                                    </button>
+                                  </div>
                                 </td>
                                 <td className="px-2 py-1.5">
                                   <input
@@ -1706,8 +1858,8 @@ export default function WarehouseGiacenze() {
                             ))}
                             {movementItems.length === 0 ? (
                               <tr>
-                                <td colSpan={6} className="px-3 py-4 text-center text-xs text-[var(--muted)]">
-                                  Nessuna riga inserita.
+                                <td colSpan={8} className="h-[220px] px-3 text-center align-middle text-xs text-[var(--muted)]">
+                                  Gli articoli caricati in magazzino appariranno qui.
                                 </td>
                               </tr>
                             ) : null}
@@ -2106,3 +2258,4 @@ export default function WarehouseGiacenze() {
     </AppLayout>
   );
 }
+
