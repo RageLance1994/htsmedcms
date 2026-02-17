@@ -5,7 +5,7 @@ const Table = forwardRef(function Table({ className = "", ...props }, ref) {
     <div className="relative w-full overflow-auto">
       <table
         ref={ref}
-        className={`w-full caption-bottom text-sm ${className}`}
+        className={`table-dense w-full caption-bottom text-xs ${className}`}
         {...props}
       />
     </div>
@@ -59,7 +59,7 @@ const TableHead = forwardRef(function TableHead(
   return (
     <th
       ref={ref}
-      className={`h-10 px-3 text-left align-middle text-[10px] uppercase tracking-[0.2em] text-[var(--muted)] ${className}`}
+      className={`h-8 px-3 text-left align-middle text-[10px] uppercase tracking-[0.2em] text-[var(--muted)] ${className}`}
       {...props}
     />
   );
@@ -72,7 +72,7 @@ const TableCell = forwardRef(function TableCell(
   return (
     <td
       ref={ref}
-      className={`px-3 py-2 align-middle text-sm ${className}`}
+      className={`px-3 py-1.5 align-middle text-xs ${className}`}
       {...props}
     />
   );

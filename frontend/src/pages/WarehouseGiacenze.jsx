@@ -71,14 +71,11 @@ export default function WarehouseGiacenze() {
   const [ddtCode, setDdtCode] = useState("");
   const [ddtPdfFile, setDdtPdfFile] = useState(null);
   const [ddtUploadedFiles, setDdtUploadedFiles] = useState([]);
-  const [photoFile, setPhotoFile] = useState(null);
   const [oemPartNumber, setOemPartNumber] = useState("");
-  const [movementNotes, setMovementNotes] = useState("");
   const [purchaseCost, setPurchaseCost] = useState("");
   const [desktopExtraCardsCollapsed, setDesktopExtraCardsCollapsed] = useState(false);
   const [compactCaricoLayout, setCompactCaricoLayout] = useState(false);
   const [ddtImporting, setDdtImporting] = useState(false);
-  const [labelScanning, setLabelScanning] = useState(false);
   const [aiAssistError, setAiAssistError] = useState("");
   const [aiAssistInfo, setAiAssistInfo] = useState("");
   const [caricoSaving, setCaricoSaving] = useState(false);
@@ -88,7 +85,6 @@ export default function WarehouseGiacenze() {
   const [serialsByCode, setSerialsByCode] = useState({});
   const [serialsLoading, setSerialsLoading] = useState({});
   const ddtPdfInputRef = useRef(null);
-  const photoInputRef = useRef(null);
 
   const [limit, setLimit] = useState(50);
   const filteredItems = useMemo(() => {
@@ -523,58 +519,6 @@ export default function WarehouseGiacenze() {
     }
   };
 
-  const scanLabelWithAi = async () => {
-    if (!photoFile) {
-      setAiAssistError("Carica una foto etichetta prima della scansione.");
-      setAiAssistInfo("");
-      return;
-    }
-    setLabelScanning(true);
-    setAiAssistError("");
-    setAiAssistInfo("");
-    try {
-      const formData = new FormData();
-      formData.append("labelImage", photoFile);
-      const res = await fetch(`${API_BASE}/api/warehouse/ai/scan-label`, {
-        method: "POST",
-        body: formData
-      });
-      if (!res.ok) {
-        const payload = await res.json().catch(() => ({}));
-        throw new Error(payload?.errore || "Scansione etichetta non riuscita");
-      }
-      const payload = await res.json();
-      const detectedCode = String(payload?.article?.codiceArticolo || payload?.articleCode || "").trim();
-      const detectedDescription = String(payload?.article?.descrizione || payload?.description || "").trim();
-      const detectedUnit = normalizeUnit(payload?.article?.unitaMisura || payload?.unit || entryUnit);
-      const foundArticle = articles.find((row) => {
-        const code = String(row.codiceArticolo || "").trim();
-        const desc = String(row.descrizione || "").trim().toLowerCase();
-        return (detectedCode && code === detectedCode) || (detectedDescription && desc === detectedDescription.toLowerCase());
-      });
-      if (foundArticle) {
-        setSelectedArticle(foundArticle);
-        setEntryUnit(normalizeUnit(foundArticle.unitaMisura || detectedUnit));
-      } else if (detectedCode || detectedDescription) {
-        setSelectedArticle({
-          codiceArticolo: detectedCode || "N/D",
-          descrizione: detectedDescription || "Articolo rilevato da AI",
-          unitaMisura: detectedUnit
-        });
-        setEntryUnit(detectedUnit);
-      }
-      if (detectedCode || detectedDescription) {
-        setArticleSearch(detectedCode || detectedDescription);
-      }
-      const confidence = payload?.confidence ? ` (confidenza ${Math.round(Number(payload.confidence) * 100)}%)` : "";
-      setAiAssistInfo(`Etichetta riconosciuta${confidence}.`);
-    } catch (err) {
-      setAiAssistError(err.message || "Errore scansione AI");
-    } finally {
-      setLabelScanning(false);
-    }
-  };
-
   const submitCarico = async () => {
     if (!selectedCausale || !selectedSupplier || movementItems.length === 0) return;
     setCaricoSaving(true);
@@ -921,7 +865,7 @@ export default function WarehouseGiacenze() {
 
         <div className="mt-4 min-h-0 flex-1 overflow-auto rounded-md border border-[var(--border)]">
           <div className="w-full">
-            <table className="warehouse-table w-full border-collapse text-sm">
+            <table className="warehouse-table table-dense w-full border-collapse text-sm">
               <thead className="sticky top-0 z-10 bg-[var(--surface-strong)]">
                 <tr className="text-left text-[10px] uppercase tracking-[0.2em] text-[var(--muted)]">
                   <th className="h-10 px-3 w-10"></th>
@@ -1070,7 +1014,7 @@ export default function WarehouseGiacenze() {
                               <span>Caricamento seriali...</span>
                             ) : serialsByCode[item.codiceArticolo]?.length ? (
                               <div className="overflow-auto rounded-md border border-[var(--border)]">
-                                <table className="w-full text-xs">
+                                <table className="table-dense w-full text-xs">
                                   <thead className="bg-[var(--surface)] text-[var(--muted)]">
                                     <tr className="text-left uppercase tracking-[0.2em]">
                                       <th className="px-3 py-2">Articolo</th>
@@ -1220,7 +1164,7 @@ export default function WarehouseGiacenze() {
             {causaliError ? <p className="mt-2 text-sm text-rose-500">{causaliError}</p> : null}
 
             <div className="mt-3 max-h-[50vh] overflow-auto rounded-lg border border-[var(--border)]">
-              <table className="w-full text-xs leading-tight">
+              <table className="table-dense w-full text-xs leading-tight">
                 <thead className="sticky top-0 z-10 bg-[var(--surface-strong)] text-[9px] uppercase tracking-[0.16em] text-[var(--muted)]">
                   <tr className="text-left">
                     <th className="px-2.5 py-1.5">Descrizione movimento</th>
@@ -1472,7 +1416,7 @@ export default function WarehouseGiacenze() {
                         {articlesLoading ? <span className="ml-2 text-xs text-[var(--muted)]">Caricamento...</span> : null}
                       </div>
                     <div className="mt-3 h-[42vh] min-h-[240px] max-h-[380px] overflow-auto rounded-md border border-[var(--border)] lg:min-h-0 lg:h-auto lg:max-h-none lg:flex-1">
-                        <table className={`min-w-[460px] w-full ${compactCaricoLayout ? "text-[10px]" : "text-xs"}`}>
+                        <table className={`table-dense min-w-[460px] w-full ${compactCaricoLayout ? "text-[10px]" : "text-xs"}`}>
                           <thead className={`sticky top-0 z-10 bg-[var(--surface-strong)] uppercase tracking-[0.2em] text-[var(--muted)] ${compactCaricoLayout ? "text-[8px]" : "text-[9px]"}`}>
                             <tr className="text-left">
                               <th className="px-3 py-2">Codice</th>
@@ -1537,7 +1481,7 @@ export default function WarehouseGiacenze() {
                         />
                       </div>
                       <div className="mt-3 h-[42vh] min-h-[240px] max-h-[380px] overflow-auto rounded-md border border-[var(--border)] lg:min-h-0 lg:h-auto lg:max-h-none lg:flex-1">
-                        <table className={`min-w-[760px] w-full ${compactCaricoLayout ? "text-[10px]" : "text-xs"}`}>
+                        <table className={`table-dense min-w-[760px] w-full ${compactCaricoLayout ? "text-[10px]" : "text-xs"}`}>
                           <thead className={`sticky top-0 bg-[var(--surface-strong)] uppercase tracking-[0.2em] text-[var(--muted)] ${compactCaricoLayout ? "text-[8px]" : "text-[9px]"}`}>
                             <tr className="text-left">
                               <th className="px-3 py-2">Codice articolo</th>
@@ -1600,15 +1544,11 @@ export default function WarehouseGiacenze() {
                   <button
                     type="button"
                     title={desktopExtraCardsCollapsed ? "ESPANDI dettagli" : "COMPRIMI dettagli"}
-                    onClick={() => {
-                      if (compactCaricoLayout) return;
-                      setDesktopExtraCardsCollapsed((prev) => !prev);
-                    }}
-                    className="absolute left-1/2 top-1/2 inline-flex h-6 min-w-[44px] -translate-x-1/2 -translate-y-1/2 items-center justify-center rounded-full border border-[var(--border)] bg-[var(--surface)] px-3 text-[var(--muted)] hover:bg-[var(--hover)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald-400/60 disabled:cursor-not-allowed disabled:opacity-40"
+                    onClick={() => setDesktopExtraCardsCollapsed((prev) => !prev)}
+                    className="absolute left-1/2 top-1/2 inline-flex h-6 min-w-[44px] -translate-x-1/2 -translate-y-1/2 items-center justify-center rounded-full border border-[var(--border)] bg-[var(--surface)] px-3 text-[var(--muted)] hover:bg-[var(--hover)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald-400/60"
                     aria-expanded={!desktopExtraCardsCollapsed}
                     aria-controls="carico-extra-cards"
                     aria-label={desktopExtraCardsCollapsed ? "Espandi dettagli card inferiori" : "Comprimi dettagli card inferiori"}
-                    disabled={compactCaricoLayout}
                   >
                     <i
                       className={`fa-solid text-[11px] ${desktopExtraCardsCollapsed ? "fa-caret-down" : "fa-caret-up"}`}
@@ -1619,14 +1559,14 @@ export default function WarehouseGiacenze() {
 
                 <div
                   className={`max-h-none overflow-visible opacity-100 lg:overflow-hidden lg:transition-[max-height,opacity] lg:duration-300 lg:ease-out ${
-                    desktopExtraCardsCollapsed || compactCaricoLayout ? "lg:max-h-0 lg:opacity-0 lg:pointer-events-none" : "lg:max-h-[520px] lg:opacity-100"
+                    desktopExtraCardsCollapsed ? "lg:max-h-0 lg:opacity-0 lg:pointer-events-none" : "lg:max-h-[520px] lg:opacity-100"
                   }`}
                 >
                 <section
                   id="carico-extra-cards"
-                  className="grid w-full items-start gap-3 lg:grid-cols-12 lg:items-stretch lg:gap-4"
+                  className="grid w-full items-start gap-3 lg:grid-cols-12 lg:gap-4"
                 >
-                  <div className="h-full rounded-lg border border-[var(--border)] bg-[var(--surface)] p-3 lg:col-span-6 lg:flex lg:flex-col lg:p-2.5">
+                  <div className="h-fit rounded-lg border border-[var(--border)] bg-[var(--surface)] p-3 lg:col-span-6 lg:p-2.5">
                     <p className={`${compactCaricoLayout ? "text-[10px]" : "text-[11px]"} uppercase tracking-[0.2em] text-[var(--muted)]`}>Registrazione DDT</p>
                     <label className="mt-2 block text-xs lg:mt-1.5">
                       <span className="text-xs uppercase tracking-[0.2em] text-[var(--muted)]">Codice</span>
@@ -1645,7 +1585,7 @@ export default function WarehouseGiacenze() {
                       className="hidden"
                       onChange={handleDdtFileSelection}
                     />
-                    <div className="mt-2 grid gap-2 lg:min-h-[120px] lg:flex-1 lg:grid-cols-[382fr_618fr]">
+                    <div className="mt-2 grid gap-2 lg:h-[88px] lg:grid-cols-[382fr_618fr]">
                       <button
                         type="button"
                         onClick={() => ddtPdfInputRef.current?.click()}
@@ -1661,7 +1601,7 @@ export default function WarehouseGiacenze() {
 
                       <div className="min-w-0 overflow-hidden rounded-md border border-[var(--border)]">
                         <div className="h-full overflow-y-auto overflow-x-hidden pr-1">
-                          <table className={`w-full table-fixed ${compactCaricoLayout ? "text-[10px]" : "text-[11px]"}`}>
+                          <table className={`table-dense w-full table-fixed ${compactCaricoLayout ? "text-[10px]" : "text-[11px]"}`}>
                             <tbody>
                               {ddtUploadedFiles.map((row) => (
                                 <tr key={row.id} className="border-t border-[var(--border)] first:border-t-0">
@@ -1708,30 +1648,8 @@ export default function WarehouseGiacenze() {
                     </button>
                   </div>
 
-                  <div className="h-full rounded-lg border border-[var(--border)] bg-[var(--surface)] p-3 lg:col-span-3 lg:flex lg:flex-col lg:p-2.5">
-                    <p className={`${compactCaricoLayout ? "text-[10px]" : "text-[11px]"} uppercase tracking-[0.2em] text-[var(--muted)]`}>Photo Upload / P/N OEM / Note</p>
-                    <input
-                      ref={photoInputRef}
-                      type="file"
-                      accept="image/*"
-                      className="hidden"
-                      onChange={(event) => setPhotoFile(event.target.files?.[0] || null)}
-                    />
-                    <button
-                      type="button"
-                      onClick={() => photoInputRef.current?.click()}
-                      className="mt-2 flex h-16 w-full items-center justify-center rounded-md border border-dashed border-[var(--border)] bg-[var(--surface-soft)] text-xs font-semibold hover:bg-[var(--hover)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald-400/60 lg:h-10"
-                    >
-                      {photoFile?.name || "Upload foto articolo"}
-                    </button>
-                    <button
-                      type="button"
-                      onClick={scanLabelWithAi}
-                      disabled={labelScanning || !photoFile}
-                      className="mt-2 w-full rounded-md border border-[var(--border)] px-3 py-2 text-xs font-semibold hover:bg-[var(--hover)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald-400/60 disabled:cursor-not-allowed disabled:opacity-60 lg:py-1.5"
-                    >
-                      {labelScanning ? "Scansione AI..." : "Scansiona etichetta (AI)"}
-                    </button>
+                  <div className="h-fit rounded-lg border border-[var(--border)] bg-[var(--surface)] p-3 lg:col-span-6 lg:p-2.5">
+                    <p className={`${compactCaricoLayout ? "text-[10px]" : "text-[11px]"} uppercase tracking-[0.2em] text-[var(--muted)]`}>Costo di acquisto</p>
                     <label className="mt-2 block text-xs lg:mt-1.5">
                       <span className="text-xs uppercase tracking-[0.2em] text-[var(--muted)]">P/N OEM</span>
                       <input
@@ -1742,20 +1660,6 @@ export default function WarehouseGiacenze() {
                         placeholder="Inserisci part number OEM"
                       />
                     </label>
-                    <label className="mt-2 block text-xs lg:mt-1.5">
-                      <span className="text-xs uppercase tracking-[0.2em] text-[var(--muted)]">Note</span>
-                      <textarea
-                        value={movementNotes}
-                        onChange={(event) => setMovementNotes(event.target.value)}
-                        rows={2}
-                        className="mt-1.5 h-16 w-full resize-none rounded-md border border-[var(--border)] bg-[var(--surface)] px-3 py-2 text-xs focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald-400/60 lg:h-10 lg:py-1.5"
-                        placeholder="Inserisci note"
-                      />
-                    </label>
-                  </div>
-
-                  <div className="h-fit rounded-lg border border-[var(--border)] bg-[var(--surface)] p-3 lg:col-span-3 lg:p-2.5">
-                    <p className={`${compactCaricoLayout ? "text-[10px]" : "text-[11px]"} uppercase tracking-[0.2em] text-[var(--muted)]`}>Costo di acquisto</p>
                     <div className="mt-2 flex items-center rounded-md border border-[var(--border)] bg-[var(--surface)] px-3 py-2 lg:py-1.5">
                       <span className={`mr-3 text-[var(--muted)] ${compactCaricoLayout ? "text-xs" : "text-sm"}`}>EUR</span>
                       <input

@@ -81,3 +81,19 @@ html.dark {
 .text-balance {
   text-wrap: balance;
 }
+
+/* Dense rows for operational tables */
+.table-dense th,
+.table-dense td {
+  padding-top: 0.2rem !important;
+  padding-bottom: 0.2rem !important;
+  line-height: 1.05 !important;
+}
+
+.table-dense th {
+  padding-top: 0.35rem !important;
+  padding-bottom: 0.35rem !important;
+  line-height: 1.15 !important;
+  height: auto !important;
+  min-height: 0 !important;
+}
