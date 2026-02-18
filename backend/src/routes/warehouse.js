@@ -1,5 +1,6 @@
 import express from "express";
 import mongoose from "mongoose";
+import crypto from "crypto";
 
 const router = express.Router();
 
@@ -16,6 +17,126 @@ const parseBool = (value, fallback = false) => {
     if (["0", "false", "no", "n"].includes(v)) return false;
   }
   return fallback;
+};
+
+const SCAN_SESSION_TTL_MS = 10 * 60 * 1000;
+const scanSessions = new Map();
+
+const cleanupExpiredScanSessions = () => {
+  const now = Date.now();
+  for (const [id, session] of scanSessions.entries()) {
+    if (!session || session.expiresAt <= now) {
+      scanSessions.delete(id);
+    }
+  }
+};
+
+const normalizeOrigin = (value) => {
+  const raw = String(value || "").trim();
+  if (!raw) return "";
+  return raw.replace(/\/+$/, "");
+};
+
+const getScanBaseUrl = (req) => {
+  const envBase = normalizeOrigin(process.env.SCAN_MOBILE_BASE_URL);
+  if (envBase) return envBase;
+  const originHeader = normalizeOrigin(req.headers.origin);
+  if (originHeader) return originHeader;
+  const forwardedProto = String(req.headers["x-forwarded-proto"] || "").split(",")[0].trim();
+  const proto = forwardedProto || req.protocol || "http";
+  const host = String(req.headers["x-forwarded-host"] || req.headers.host || "").split(",")[0].trim();
+  if (!host) return "";
+  return `${proto}://${host}`;
+};
+
+const readResponseOutputText = (payload) => {
+  if (typeof payload?.output_text === "string" && payload.output_text.trim()) {
+    return payload.output_text.trim();
+  }
+  const output = Array.isArray(payload?.output) ? payload.output : [];
+  for (const item of output) {
+    const content = Array.isArray(item?.content) ? item.content : [];
+    for (const part of content) {
+      if (typeof part?.text === "string" && part.text.trim()) {
+        return part.text.trim();
+      }
+    }
+  }
+  return "";
+};
+
+const normalizeExtractedSerial = (value) =>
+  String(value || "")
+    .trim()
+    .replace(/\s+/g, " ")
+    .replace(/^[^A-Za-z0-9]+|[^A-Za-z0-9]+$/g, "");
+
+const extractSerialFromImageWithOpenAI = async (imageDataUrl) => {
+  const apiKey = String(process.env.OPENAI_API_KEY || "").trim();
+  if (!apiKey) {
+    throw new Error("OPENAI_API_KEY non configurata");
+  }
+  const model = String(process.env.OPENAI_VISION_MODEL || "gpt-4.1-mini");
+  const prompt =
+    "Estrai il codice seriale principale dall'immagine. Rispondi SOLO JSON valido con la chiave seriale. Se non trovi alcun seriale usa stringa vuota.";
+
+  const response = await fetch("https://api.openai.com/v1/responses", {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      Authorization: `Bearer ${apiKey}`
+    },
+    body: JSON.stringify({
+      model,
+      temperature: 0,
+      input: [
+        {
+          role: "user",
+          content: [
+            { type: "input_text", text: prompt },
+            { type: "input_image", image_url: imageDataUrl }
+          ]
+        }
+      ],
+      text: {
+        format: {
+          type: "json_schema",
+          name: "seriale_estratto",
+          schema: {
+            type: "object",
+            additionalProperties: false,
+            properties: {
+              seriale: { type: "string" }
+            },
+            required: ["seriale"]
+          },
+          strict: true
+        }
+      }
+    })
+  });
+
+  const payload = await response.json().catch(() => ({}));
+  if (!response.ok) {
+    const msg =
+      payload?.error?.message || payload?.message || `Errore OpenAI (${response.status})`;
+    throw new Error(msg);
+  }
+
+  let seriale = "";
+  const outputText = readResponseOutputText(payload);
+  if (outputText) {
+    try {
+      const parsed = JSON.parse(outputText);
+      seriale = normalizeExtractedSerial(parsed?.seriale);
+    } catch {
+      seriale = normalizeExtractedSerial(outputText);
+    }
+  }
+  if (!seriale) {
+    throw new Error("Seriale non rilevato dall'immagine");
+  }
+  return seriale;
 };
 
 let ensureIndexesPromise = null;
@@ -507,6 +628,146 @@ router.get("/fornitori", async (req, res) => {
   }
 });
 
+router.get("/ddt", async (req, res) => {
+  try {
+    ensureIndexesInBackground();
+    const db = getWarehouseDb();
+    const search = String(req.query.search || "").trim();
+    const limit = Math.min(Math.max(parseInt(req.query.limit || "500", 10), 10), 2000);
+
+    const match = {};
+    if (search) {
+      const re = new RegExp(search.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"), "i");
+      match.$or = [
+        { "N DDT": re },
+        { "Trasporto a mezzo": re },
+        { "Indirizzo destinazione": re },
+        { Note: re },
+        { Note2: re }
+      ];
+    }
+
+    const ddtRows = await db
+      .collection("DDT")
+      .find(match, {
+        projection: {
+          _id: 0,
+          cod: 1,
+          data: 1,
+          "N DDT": 1,
+          Cod_Cliente: 1,
+          Cod_Causale: 1,
+          "Indirizzo destinazione": 1,
+          "Trasporto a mezzo": 1,
+          Note: 1,
+          Note2: 1
+        }
+      })
+      .sort({ data: -1, cod: -1 })
+      .limit(limit)
+      .toArray();
+
+    const clientiCodes = Array.from(new Set(ddtRows.map((r) => Number(r.Cod_Cliente)).filter(Number.isFinite)));
+    const causaliCodes = Array.from(new Set(ddtRows.map((r) => Number(r.Cod_Causale)).filter(Number.isFinite)));
+
+    const [clienti, causali] = await Promise.all([
+      clientiCodes.length
+        ? db
+            .collection("Cli_For")
+            .find({ COD: { $in: clientiCodes } }, { projection: { _id: 0, COD: 1, Nominativo: 1 } })
+            .toArray()
+        : [],
+      causaliCodes.length
+        ? db
+            .collection("Causali di magazzino")
+            .find({ cod: { $in: causaliCodes } }, { projection: { _id: 0, cod: 1, "Descrizione Movimento": 1 } })
+            .toArray()
+        : []
+    ]);
+
+    const clientiMap = new Map(clienti.map((c) => [Number(c.COD), String(c.Nominativo || "")]));
+    const causaliMap = new Map(causali.map((c) => [Number(c.cod), String(c["Descrizione Movimento"] || "")]));
+
+    const data = ddtRows.map((row) => {
+      const cod = Number(row.cod);
+      const noteInterne = [row.Note, row.Note2].filter(Boolean).join(" ").trim();
+      return {
+        cod,
+        numeroDdt: String(row["N DDT"] || ""),
+        data: row.data || null,
+        codCliente: Number(row.Cod_Cliente || 0) || null,
+        nominativo: clientiMap.get(Number(row.Cod_Cliente)) || "",
+        indirizzoDestinazione: String(row["Indirizzo destinazione"] || ""),
+        trasportoMezzo: String(row["Trasporto a mezzo"] || ""),
+        descrizioneMovimento: causaliMap.get(Number(row.Cod_Causale)) || "",
+        noteInterne,
+        codCausale: Number(row.Cod_Causale || 0) || null
+      };
+    });
+
+    res.json({ data });
+  } catch (error) {
+    res.status(500).json({ errore: "Errore caricamento DDT", dettaglio: error.message });
+  }
+});
+
+router.get("/ddt/:cod", async (req, res) => {
+  try {
+    ensureIndexesInBackground();
+    const db = getWarehouseDb();
+    const cod = Number(req.params.cod);
+    if (!Number.isFinite(cod)) {
+      return res.status(400).json({ errore: "Codice DDT non valido" });
+    }
+
+    const ddt = await db
+      .collection("DDT")
+      .findOne({ cod }, { projection: { _id: 0 } });
+    if (!ddt) {
+      return res.status(404).json({ errore: "DDT non trovato" });
+    }
+
+    const [cliente, causale, items] = await Promise.all([
+      db.collection("Cli_For").findOne(
+        { COD: Number(ddt.Cod_Cliente || 0) },
+        { projection: { _id: 0, COD: 1, Nominativo: 1 } }
+      ),
+      db.collection("Causali di magazzino").findOne(
+        { cod: Number(ddt.Cod_Causale || 0) },
+        { projection: { _id: 0, cod: 1, "Descrizione Movimento": 1 } }
+      ),
+      db
+        .collection("VociDDT_FM")
+        .find({ Cod_DDT: cod }, { projection: { _id: 0 } })
+        .sort({ cod: 1 })
+        .toArray()
+    ]);
+
+    const articoli = items.map((item) => ({
+      codiceArticolo: String(item["Codice Articolo"] || ""),
+      quantita: Number(item["QT movimentata"] || 0),
+      seriale: String(item.Seriale || "").trim(),
+      descrizione: String(item.Descrizione || "")
+    }));
+
+    return res.json({
+      dettaglio: {
+        cod,
+        numeroDdt: String(ddt["N DDT"] || ""),
+        data: ddt.data || null,
+        causale: String(causale?.["Descrizione Movimento"] || ""),
+        nominativo: String(cliente?.Nominativo || ""),
+        indirizzoDestinazione: String(ddt["Indirizzo destinazione"] || ""),
+        trasportoMezzo: String(ddt["Trasporto a mezzo"] || ""),
+        noteInterne: [ddt.Note, ddt.Note2].filter(Boolean).join(" ").trim(),
+        articoli
+      }
+    });
+  } catch (error) {
+    return res.status(500).json({ errore: "Errore caricamento dettaglio DDT", dettaglio: error.message });
+  }
+});
+
 router.post("/articoli", async (req, res) => {
   try {
     ensureIndexesInBackground();
@@ -733,6 +994,91 @@ router.post("/carico", async (req, res) => {
     res.json({ ok: true, inserted: docs.length, allocazioni: allocazioni.length });
   } catch (error) {
     res.status(500).json({ errore: "Errore salvataggio carico", dettaglio: error.message });
+  }
+});
+
+router.post("/scan-sessions", (req, res) => {
+  cleanupExpiredScanSessions();
+  const id = crypto.randomUUID();
+  const baseUrl = getScanBaseUrl(req);
+  if (!baseUrl) {
+    return res.status(500).json({ errore: "Impossibile determinare l'URL base per la scansione mobile" });
+  }
+  const mobileUrl = `${baseUrl}/mobile-scan/${encodeURIComponent(id)}`;
+  const now = Date.now();
+  scanSessions.set(id, {
+    id,
+    status: "waiting",
+    seriale: "",
+    error: "",
+    createdAt: now,
+    updatedAt: now,
+    expiresAt: now + SCAN_SESSION_TTL_MS,
+    context: String(req.body?.context || "")
+  });
+  return res.status(201).json({
+    ok: true,
+    sessionId: id,
+    mobileUrl,
+    expiresAt: new Date(now + SCAN_SESSION_TTL_MS).toISOString()
+  });
+});
+
+router.get("/scan-sessions/:id", (req, res) => {
+  cleanupExpiredScanSessions();
+  const id = String(req.params.id || "");
+  const session = scanSessions.get(id);
+  if (!session) {
+    return res.status(404).json({ errore: "Sessione di scansione non trovata o scaduta" });
+  }
+  return res.json({
+    ok: true,
+    sessionId: session.id,
+    status: session.status,
+    seriale: session.seriale || "",
+    errore: session.error || "",
+    createdAt: new Date(session.createdAt).toISOString(),
+    updatedAt: new Date(session.updatedAt).toISOString(),
+    expiresAt: new Date(session.expiresAt).toISOString()
+  });
+});
+
+router.delete("/scan-sessions/:id", (req, res) => {
+  const id = String(req.params.id || "");
+  scanSessions.delete(id);
+  return res.json({ ok: true });
+});
+
+router.post("/scan-sessions/:id/scan", async (req, res) => {
+  cleanupExpiredScanSessions();
+  const id = String(req.params.id || "");
+  const session = scanSessions.get(id);
+  if (!session) {
+    return res.status(404).json({ errore: "Sessione di scansione non trovata o scaduta" });
+  }
+  const imageDataUrl = String(req.body?.imageDataUrl || "");
+  if (!/^data:image\/[a-zA-Z0-9.+-]+;base64,/.test(imageDataUrl)) {
+    return res.status(400).json({ errore: "Immagine non valida: usa un data URL base64" });
+  }
+
+  session.status = "processing";
+  session.updatedAt = Date.now();
+  session.error = "";
+  session.seriale = "";
+
+  try {
+    const seriale = await extractSerialFromImageWithOpenAI(imageDataUrl);
+    session.status = "ready";
+    session.seriale = seriale;
+    session.updatedAt = Date.now();
+    scanSessions.set(id, session);
+    return res.json({ ok: true, sessionId: id, status: "ready", seriale });
+  } catch (error) {
+    session.status = "error";
+    session.error = error.message || "Errore estrazione seriale";
+    session.updatedAt = Date.now();
+    scanSessions.set(id, session);
+    return res.status(500).json({ errore: "Errore analisi immagine", dettaglio: session.error });
   }
 });
 

@@ -1,5 +1,6 @@
 import { Fragment, memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import AppLayout from "../components/AppLayout.jsx";
+import ContextMenu from "../components/ui/ContextMenu.jsx";
 
 const API_BASE = import.meta.env.VITE_API_URL || "http://localhost:3000";
 
@@ -206,6 +207,16 @@ export default function WarehouseGiacenze() {
   const [expandedRows, setExpandedRows] = useState(() => new Set());
   const [serialsByCode, setSerialsByCode] = useState({});
   const [serialsLoading, setSerialsLoading] = useState({});
+  const [scanModal, setScanModal] = useState({
+    open: false,
+    rowId: "",
+    sessionId: "",
+    mobileUrl: "",
+    status: "idle",
+    error: "",
+    seriale: ""
+  });
+  const scanPollRef = useRef(null);
   const ddtPdfInputRef = useRef(null);
 
   const [limit, setLimit] = useState(50);
@@ -367,6 +378,7 @@ export default function WarehouseGiacenze() {
     return () => {
       if (mainSearchDebounceRef.current) clearTimeout(mainSearchDebounceRef.current);
       if (articleSearchDebounceRef.current) clearTimeout(articleSearchDebounceRef.current);
+      if (scanPollRef.current) clearInterval(scanPollRef.current);
     };
   }, []);
 
@@ -629,6 +641,107 @@ export default function WarehouseGiacenze() {
           : item
       )
     );
+  };
+
+  const stopScanPolling = () => {
+    if (scanPollRef.current) {
+      clearInterval(scanPollRef.current);
+      scanPollRef.current = null;
+    }
+  };
+
+  const closeScanModal = async () => {
+    stopScanPolling();
+    const sessionId = scanModal.sessionId;
+    setScanModal({
+      open: false,
+      rowId: "",
+      sessionId: "",
+      mobileUrl: "",
+      status: "idle",
+      error: "",
+      seriale: ""
+    });
+    if (sessionId) {
+      await fetch(`${API_BASE}/api/warehouse/scan-sessions/${encodeURIComponent(sessionId)}`, {
+        method: "DELETE"
+      }).catch(() => null);
+    }
+  };
+
+  const startScanPolling = (sessionId, rowId) => {
+    stopScanPolling();
+    scanPollRef.current = setInterval(async () => {
+      try {
+        const res = await fetch(`${API_BASE}/api/warehouse/scan-sessions/${encodeURIComponent(sessionId)}`);
+        const payload = await res.json().catch(() => ({}));
+        if (!res.ok) {
+          throw new Error(payload?.errore || "Sessione di scansione scaduta");
+        }
+        const status = String(payload?.status || "");
+        if (status === "ready") {
+          const seriale = String(payload?.seriale || "").trim();
+          if (seriale) {
+            updateMovementItemField(rowId, "seriale", seriale);
+          }
+          setScanModal((prev) => ({ ...prev, status: "ready", seriale }));
+          stopScanPolling();
+          setTimeout(() => {
+            closeScanModal();
+          }, 900);
+        } else if (status === "error") {
+          setScanModal((prev) => ({ ...prev, status: "error", error: payload?.errore || "Errore scansione" }));
+          stopScanPolling();
+        } else {
+          setScanModal((prev) => ({ ...prev, status: status || "waiting" }));
+        }
+      } catch (err) {
+        setScanModal((prev) => ({ ...prev, status: "error", error: err.message || "Errore scansione" }));
+        stopScanPolling();
+      }
+    }, 1200);
+  };
+
+  const openSerialScan = async (rowId) => {
+    try {
+      setScanModal({
+        open: true,
+        rowId,
+        sessionId: "",
+        mobileUrl: "",
+        status: "starting",
+        error: "",
+        seriale: ""
+      });
+      const res = await fetch(`${API_BASE}/api/warehouse/scan-sessions`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ context: "warehouse-serial-scan" })
+      });
+      const payload = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        throw new Error(payload?.errore || "Errore avvio sessione scan");
+      }
+      const sessionId = String(payload?.sessionId || "");
+      const mobileUrl = String(payload?.mobileUrl || "");
+      if (!sessionId || !mobileUrl) {
+        throw new Error("Sessione scan non valida");
+      }
+      setScanModal((prev) => ({
+        ...prev,
+        sessionId,
+        mobileUrl,
+        status: "waiting",
+        error: ""
+      }));
+      startScanPolling(sessionId, rowId);
+    } catch (err) {
+      setScanModal((prev) => ({
+        ...prev,
+        status: "error",
+        error: err.message || "Errore avvio scansione"
+      }));
+    }
   };
 
   const updateNewArticleField = (field, value) => {
@@ -984,10 +1097,10 @@ export default function WarehouseGiacenze() {
 
       <section className="warehouse-section flex min-h-0 flex-1 flex-col rounded-lg border border-[var(--border)] bg-[var(--surface)] p-3 sm:p-4 min-w-0 w-full max-w-full overflow-x-hidden">
         <div className="min-w-0">
-          <div className="flex min-w-0 items-end">
-            <div className="flex-1 min-w-0">
-              <label className="text-xs uppercase tracking-[0.2em] text-[var(--muted)]">Ricerca</label>
-              <div className="mt-2 flex items-center rounded-md border border-[var(--border)] bg-[var(--surface)] px-3 py-2">
+          <label className="text-xs uppercase tracking-[0.2em] text-[var(--muted)]">Ricerca</label>
+          <div className="mt-2 flex min-w-0 flex-wrap items-center gap-3">
+            <div className="min-w-0 flex-1">
+              <div className="flex items-center rounded-md border border-[var(--border)] bg-[var(--surface)] px-3 py-2">
                 <button
                   type="button"
                   onClick={() => fetchData()}
@@ -1030,6 +1143,44 @@ export default function WarehouseGiacenze() {
                   <i className="fa-solid fa-filter text-[12px]" aria-hidden="true" />
                 </button>
               </div>
+            </div>
+            <div className="flex shrink-0 items-center gap-2 text-sm">
+              <div className="flex items-center gap-2 text-xs text-[var(--muted)]">
+                <span>Righe</span>
+                <select
+                  value={limit}
+                  onChange={(event) => {
+                    const value = event.target.value;
+                    setLimit(value === "all" ? "all" : parseInt(value, 10));
+                  }}
+                  className="rounded-md border border-[var(--border)] bg-[var(--surface)] px-2 py-1 text-xs text-[var(--page-fg)]"
+                >
+                  <option value="10">10</option>
+                  <option value="20">20</option>
+                  <option value="50">50</option>
+                  <option value="100">100</option>
+                  <option value="all">Tutti</option>
+                </select>
+              </div>
+              <button
+                type="button"
+                disabled={page === 1}
+                onClick={() => setPage((prev) => Math.max(prev - 1, 1))}
+                className="rounded-md border border-[var(--border)] px-3 py-1 disabled:opacity-50"
+              >
+                Prev
+              </button>
+              <span className="text-[var(--muted)]">
+                {page} / {totalPages}
+              </span>
+              <button
+                type="button"
+                disabled={page >= totalPages}
+                onClick={() => setPage((prev) => Math.min(prev + 1, totalPages))}
+                className="rounded-md border border-[var(--border)] px-3 py-1 disabled:opacity-50"
+              >
+                Next
+              </button>
             </div>
           </div>
         </div>
@@ -1083,55 +1234,25 @@ export default function WarehouseGiacenze() {
           </div>
         ) : null}
 
-        <div className="mt-4 flex items-center justify-between gap-3">
+        <div className="mt-3 flex items-center justify-between gap-3">
           <p className="text-sm text-[var(--muted)]">
-            Totale articoli: <span className="text-[var(--page-fg)]">{formatNumber(total)}</span>
+            Da{" "}
+            <span className="text-[var(--page-fg)]">
+              {total === 0 ? 0 : formatNumber((page - 1) * effectiveLimit + 1)}
+            </span>{" "}
+            a{" "}
+            <span className="text-[var(--page-fg)]">
+              {total === 0 ? 0 : formatNumber(Math.min(page * effectiveLimit, total))}
+            </span>{" "}
+            articoli di <span className="text-[var(--page-fg)]">{formatNumber(total)}</span>
           </p>
-          <div className="flex items-center gap-2 text-sm">
-            <div className="flex items-center gap-2 text-xs text-[var(--muted)]">
-              <span>Righe</span>
-              <select
-                value={limit}
-                onChange={(event) => {
-                  const value = event.target.value;
-                  setLimit(value === "all" ? "all" : parseInt(value, 10));
-                }}
-                className="rounded-md border border-[var(--border)] bg-[var(--surface)] px-2 py-1 text-xs text-[var(--page-fg)]"
-              >
-                <option value="10">10</option>
-                <option value="20">20</option>
-                <option value="50">50</option>
-                <option value="100">100</option>
-                <option value="all">Tutti</option>
-              </select>
-            </div>
-            <button
-              type="button"
-              disabled={page === 1}
-              onClick={() => setPage((prev) => Math.max(prev - 1, 1))}
-              className="rounded-md border border-[var(--border)] px-3 py-1 disabled:opacity-50"
-            >
-              Prev
-            </button>
-            <span className="text-[var(--muted)]">
-              {page} / {totalPages}
-            </span>
-            <button
-              type="button"
-              disabled={page >= totalPages}
-              onClick={() => setPage((prev) => Math.min(prev + 1, totalPages))}
-              className="rounded-md border border-[var(--border)] px-3 py-1 disabled:opacity-50"
-            >
-              Next
-            </button>
-          </div>
         </div>
 
         {error ? <p className="mt-4 text-sm text-rose-500">{error}</p> : null}
 
         <div className="mt-4 min-h-0 flex-1 overflow-auto rounded-md border border-[var(--border)]">
           <div className="w-full">
-            <table className="warehouse-table table-dense w-full table-fixed border-collapse text-sm">
+            <table className="warehouse-table table-dense w-full table-fixed border-collapse text-xs">
               <thead className="sticky top-0 z-10 bg-[var(--surface-strong)]">
                 <tr className="text-left text-[10px] uppercase tracking-[0.2em] text-[var(--muted)]">
                   <th className="h-10 px-3 w-10"></th>
@@ -1239,7 +1360,7 @@ export default function WarehouseGiacenze() {
                           {canExpand ? (
                             <button
                               type="button"
-                              className="flex h-6 w-6 items-center justify-center rounded-md border border-[var(--border)] text-[var(--muted)] hover:bg-[var(--hover)]"
+                              className="flex h-5 w-5 items-center justify-center rounded-md border border-[var(--border)] text-[var(--muted)] hover:bg-[var(--hover)]"
                               onClick={(event) => {
                                 event.stopPropagation();
                                 if (!expanded) {
@@ -1269,7 +1390,7 @@ export default function WarehouseGiacenze() {
                         <td className="px-3 py-2">{formatNumber(item.giacenzaMinima)}</td>
                         <td className="px-3 py-2">
                           <span
-                            className={`inline-flex items-center rounded-full px-2 py-1 text-xs ${
+                            className={`inline-flex items-center rounded-full px-2 py-0.5 text-[11px] ${
                               alert ? "bg-rose-100 text-rose-700" : "bg-emerald-100 text-emerald-700"
                             }`}
                           >
@@ -1328,13 +1449,12 @@ export default function WarehouseGiacenze() {
         </div>
       </section>
 
-      {rowMenu.open ? (
-        <div
-          className="fixed z-50 w-52 rounded-lg border border-[var(--border)] bg-[var(--surface)] p-2 shadow-lg"
-          style={{ left: rowMenu.x, top: rowMenu.y }}
-          onMouseDown={(event) => event.stopPropagation()}
-          onClick={(event) => event.stopPropagation()}
-        >
+      <ContextMenu
+        open={rowMenu.open}
+        x={rowMenu.x}
+        y={rowMenu.y}
+        className="z-50 w-52 rounded-lg border border-[var(--border)] bg-[var(--surface)] p-2 shadow-lg"
+      >
           <button
             type="button"
             className="flex w-full items-center gap-2 rounded-md px-3 py-2 text-sm hover:bg-[var(--hover)]"
@@ -1387,8 +1507,7 @@ export default function WarehouseGiacenze() {
             <i className="fa-solid fa-plus text-[12px] text-[var(--muted)]" aria-hidden="true" />
             Nuovo
           </button>
-        </div>
-      ) : null}
+      </ContextMenu>
 
       {causaliOpen ? (
         <div
@@ -1705,8 +1824,8 @@ export default function WarehouseGiacenze() {
     compactCaricoLayout={compactCaricoLayout}
     quantity={getArticleRowQuantity(row.codiceArticolo)}
     onSelect={handleSelectArticle}
-    onDecrementQty={(codiceArticolo) => bumpArticleRowQuantity(codiceArticolo, -1)}
-    onIncrementQty={(codiceArticolo) => bumpArticleRowQuantity(codiceArticolo, 1)}
+    onDecrementQty={handleDecrementArticleRowQuantity}
+    onIncrementQty={handleIncrementArticleRowQuantity}
     onQuantityInputChange={setArticleRowQuantity}
     onAdd={addMovementItemFromArticle}
   />
@@ -1805,7 +1924,10 @@ export default function WarehouseGiacenze() {
                                     />
                                     <button
                                       type="button"
-                                      onClick={(event) => event.stopPropagation()}
+                                      onClick={(event) => {
+                                        event.stopPropagation();
+                                        openSerialScan(row.id);
+                                      }}
                                       className="absolute right-1 top-1/2 inline-flex h-[18px] w-[18px] -translate-y-1/2 items-center justify-center rounded-sm text-[var(--muted)] hover:bg-[var(--hover)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald-400/60"
                                       aria-label="Scansiona seriale"
                                       title="Scansiona seriale"
@@ -2030,6 +2152,67 @@ export default function WarehouseGiacenze() {
                 </div>
               </div>
             </div>
+          </div>
+        </div>
+      ) : null}
+
+      {scanModal.open ? (
+        <div
+          className="fixed inset-0 z-[72] flex items-center justify-center bg-black/80 px-4 py-6"
+          onMouseDown={() => closeScanModal()}
+        >
+          <div
+            className="w-full max-w-md rounded-xl border border-[var(--border)] bg-[var(--surface)] p-4 shadow-xl"
+            onMouseDown={(event) => event.stopPropagation()}
+          >
+            <div className="flex items-start justify-between gap-4">
+              <div>
+                <p className="text-xs uppercase tracking-[0.2em] text-[var(--muted)]">Scanner seriale</p>
+                <h3 className="mt-1 text-lg font-semibold">Collega smartphone con QR</h3>
+              </div>
+              <button
+                type="button"
+                className="flex h-8 w-8 items-center justify-center rounded-md border border-[var(--border)] text-[var(--muted)] hover:bg-[var(--hover)]"
+                onClick={() => closeScanModal()}
+                aria-label="Chiudi scanner seriale"
+              >
+                <i className="fa-solid fa-xmark" aria-hidden="true" />
+              </button>
+            </div>
+
+            {scanModal.mobileUrl ? (
+              <div className="mt-3 rounded-lg border border-[var(--border)] bg-[var(--surface-soft)] p-3">
+                <img
+                  src={`https://api.qrserver.com/v1/create-qr-code/?size=240x240&data=${encodeURIComponent(scanModal.mobileUrl)}`}
+                  alt="QR scanner seriale"
+                  className="mx-auto h-52 w-52 rounded-md border border-[var(--border)] bg-white p-2"
+                />
+                <p className="mt-3 text-center text-xs text-[var(--muted)]">
+                  Scansiona il QR dal telefono sulla stessa rete, scatta la foto del seriale e attendi il ritorno automatico.
+                </p>
+                <div className="mt-2 flex justify-center">
+                  <button
+                    type="button"
+                    className="rounded-md border border-[var(--border)] px-3 py-1.5 text-xs hover:bg-[var(--hover)]"
+                    onClick={() => navigator.clipboard?.writeText(scanModal.mobileUrl).catch(() => null)}
+                  >
+                    Copia link mobile
+                  </button>
+                </div>
+              </div>
+            ) : (
+              <p className="mt-4 text-sm text-[var(--muted)]">Avvio sessione in corso...</p>
+            )}
+
+            {scanModal.status === "waiting" || scanModal.status === "processing" ? (
+              <p className="mt-3 text-sm text-emerald-400">In attesa di scansione dal telefono...</p>
+            ) : null}
+            {scanModal.status === "ready" ? (
+              <p className="mt-3 text-sm text-emerald-400">Seriale acquisito: {scanModal.seriale || "-"}</p>
+            ) : null}
+            {scanModal.status === "error" && scanModal.error ? (
+              <p className="mt-3 text-sm text-rose-400">{scanModal.error}</p>
+            ) : null}
           </div>
         </div>
       ) : null}

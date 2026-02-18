@@ -65,7 +65,8 @@ export const APP_SECTIONS = [
 ];
 
 const APP_NAV_ROUTES = {
-  Giacenze: "/warehouse/giacenze"
+  Giacenze: "/warehouse/giacenze",
+  "DDT-Doc. di Trasporto": "/warehouse/ddt"
 };
 
 export default function AppLayout({
