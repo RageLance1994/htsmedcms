@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import AppLayout from "../components/AppLayout.jsx";
 import ContextMenu from "../components/ui/ContextMenu.jsx";
+import useDebouncedCallback from "../hooks/useDebouncedCallback.js";
 
 const API_BASE = import.meta.env.VITE_API_URL || "http://localhost:3000";
 
@@ -39,6 +40,10 @@ export default function WarehouseDdt() {
   const [attachmentsByCod, setAttachmentsByCod] = useState({});
   const uploadInputRef = useRef(null);
   const pendingUploadCodRef = useRef(null);
+  const [debouncedSearchUpdate, cancelDebouncedSearchUpdate] = useDebouncedCallback(
+    (next) => setDebouncedSearch(String(next || "").trim()),
+    168
+  );
 
   const selectedRow = useMemo(
     () => rows.find((row) => Number(row.cod) === Number(selectedCod)) || null,
@@ -110,9 +115,8 @@ export default function WarehouseDdt() {
   }, [selectedCod]);
 
   useEffect(() => {
-    const timer = setTimeout(() => setDebouncedSearch(search), 168);
-    return () => clearTimeout(timer);
-  }, [search]);
+    debouncedSearchUpdate(search);
+  }, [search, debouncedSearchUpdate]);
 
   useEffect(() => {
     loadDdtList(debouncedSearch);
@@ -140,11 +144,12 @@ export default function WarehouseDdt() {
 
   useEffect(() => {
     return () => {
+      cancelDebouncedSearchUpdate();
       Object.values(attachmentsByCod).forEach((item) => {
         if (item?.url) URL.revokeObjectURL(item.url);
       });
     };
-  }, [attachmentsByCod]);
+  }, [attachmentsByCod, cancelDebouncedSearchUpdate]);
 
   const openRowMenu = (event, row) => {
     event.preventDefault();
@@ -470,15 +475,15 @@ export default function WarehouseDdt() {
 
       <section
         id="ddt-details-card"
-        className={`min-w-0 shrink-0 overflow-hidden rounded-lg border border-[var(--border)] bg-[var(--surface)] transition-[max-height,opacity] duration-300 ease-out ${
-          detailsCollapsed ? "max-h-0 opacity-0 pointer-events-none" : "max-h-[40dvh] opacity-100"
+        className={`min-w-0 shrink-0 overflow-visible rounded-lg border border-[var(--border)] bg-[var(--surface)] transition-[max-height,opacity] duration-300 ease-out md:overflow-hidden ${
+          detailsCollapsed ? "max-h-0 opacity-0 pointer-events-none" : "max-h-none opacity-100 md:max-h-[40dvh]"
         }`}
       >
         <div className="border-b border-[var(--border)] bg-[var(--surface-strong)] px-4 py-2">
           <h2 className="text-xs font-semibold uppercase tracking-[0.2em] text-[var(--muted)]">Dettagli DDT</h2>
         </div>
-        <div className="grid max-h-[40dvh] gap-0 overflow-hidden lg:grid-cols-2">
-          <div className="min-h-0 overflow-y-auto border-b border-[var(--border)] p-4 lg:border-b-0 lg:border-r">
+        <div className="grid max-h-none gap-0 overflow-visible md:max-h-[40dvh] md:overflow-hidden lg:grid-cols-2">
+          <div className="min-h-0 overflow-visible border-b border-[var(--border)] p-4 md:overflow-y-auto lg:border-b-0 lg:border-r">
             <div className="grid grid-cols-2 gap-3">
               <div>
                 <p className="text-[10px] uppercase tracking-[0.2em] text-[var(--muted)]">N DDT</p>
@@ -510,38 +515,95 @@ export default function WarehouseDdt() {
           </div>
           <div className="min-h-0 min-w-0 p-4">
             <h3 className="text-[10px] uppercase tracking-[0.2em] text-[var(--muted)]">Articoli in DDT</h3>
-            <div className="mt-2 min-h-0 min-w-0 overflow-y-auto overflow-x-hidden rounded-md border border-[var(--border)]">
+            <div className="mt-2 rounded-md border border-[var(--border)] md:hidden">
+              <div className="max-h-[34dvh] overflow-auto">
+                <table className="table-dense w-full table-fixed text-xs">
+                  <colgroup>
+                    <col className="w-[20%]" />
+                    <col className="w-[10%]" />
+                    <col className="w-[20%]" />
+                    <col className="w-[50%]" />
+                  </colgroup>
+                  <thead className="bg-[var(--surface-strong)]">
+                    <tr className="text-left text-[10px] uppercase tracking-[0.2em] text-[var(--muted)]">
+                      <th className="px-3 py-2">Codice articolo</th>
+                      <th className="px-3 py-2">QT</th>
+                      <th className="px-3 py-2">Seriale</th>
+                      <th className="px-3 py-2">Descrizione</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {(details?.articoli || []).map((item, index) => (
+                      <tr key={`${details?.cod || "x"}-${item.codiceArticolo}-${index}`} className="border-t border-[var(--border)]">
+                        <td className="px-3 py-2 font-semibold text-sky-400">{item.codiceArticolo || "-"}</td>
+                        <td className="px-3 py-2">{item.quantita ?? 0}</td>
+                        <td className="px-3 py-2">{item.seriale || "-"}</td>
+                        <td className="px-3 py-2">
+                          <span className="block truncate" title={item.descrizione || ""}>
+                            {item.descrizione || "-"}
+                          </span>
+                        </td>
+                      </tr>
+                    ))}
+                    {!detailsLoading && (!details?.articoli || details.articoli.length === 0) ? (
+                      <tr>
+                        <td colSpan={4} className="px-3 py-8 text-center text-xs text-[var(--muted)]">
+                          Nessun articolo associato al DDT selezionato.
+                        </td>
+                      </tr>
+                    ) : null}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+            <div className="mt-2 hidden rounded-md border border-[var(--border)] md:block">
               <table className="table-dense w-full table-fixed text-xs">
+                <colgroup>
+                  <col className="w-[20%]" />
+                  <col className="w-[10%]" />
+                  <col className="w-[20%]" />
+                  <col className="w-[50%]" />
+                </colgroup>
                 <thead className="bg-[var(--surface-strong)]">
                   <tr className="text-left text-[10px] uppercase tracking-[0.2em] text-[var(--muted)]">
-                    <th className="w-[20%] px-3 py-2">Codice articolo</th>
-                    <th className="w-[10%] px-3 py-2">QT</th>
-                    <th className="w-[20%] px-3 py-2">Seriale</th>
-                    <th className="w-[50%] px-3 py-2">Descrizione</th>
+                    <th className="px-3 py-2">Codice articolo</th>
+                    <th className="px-3 py-2">QT</th>
+                    <th className="px-3 py-2">Seriale</th>
+                    <th className="px-3 py-2">Descrizione</th>
                   </tr>
                 </thead>
-                <tbody>
-                  {(details?.articoli || []).map((item, index) => (
-                    <tr key={`${details?.cod || "x"}-${item.codiceArticolo}-${index}`} className="border-t border-[var(--border)]">
-                      <td className="px-3 py-2 font-semibold text-sky-400">{item.codiceArticolo || "-"}</td>
-                      <td className="px-3 py-2">{item.quantita ?? 0}</td>
-                      <td className="px-3 py-2">{item.seriale || "-"}</td>
-                      <td className="px-3 py-2">
-                        <span className="block truncate" title={item.descrizione || ""}>
-                          {item.descrizione || "-"}
-                        </span>
-                      </td>
-                    </tr>
-                  ))}
-                  {!detailsLoading && (!details?.articoli || details.articoli.length === 0) ? (
-                    <tr>
-                      <td colSpan={4} className="px-3 py-8 text-center text-xs text-[var(--muted)]">
-                        Nessun articolo associato al DDT selezionato.
-                      </td>
-                    </tr>
-                  ) : null}
-                </tbody>
               </table>
+              <div className="max-h-[24dvh] overflow-y-auto">
+                <table className="table-dense w-full table-fixed text-xs">
+                  <colgroup>
+                    <col className="w-[20%]" />
+                    <col className="w-[10%]" />
+                    <col className="w-[20%]" />
+                    <col className="w-[50%]" />
+                  </colgroup>
+                  <tbody>
+                    {(details?.articoli || []).map((item, index) => (
+                      <tr key={`${details?.cod || "x"}-${item.codiceArticolo}-${index}`} className="border-t border-[var(--border)]">
+                        <td className="px-3 py-2 font-semibold text-sky-400">{item.codiceArticolo || "-"}</td>
+                        <td className="px-3 py-2">{item.quantita ?? 0}</td>
+                        <td className="px-3 py-2">{item.seriale || "-"}</td>
+                        <td className="px-3 py-2">
+                          <span className="block truncate" title={item.descrizione || ""}>
+                            {item.descrizione || "-"}
+                          </span>
+                        </td>
+                      </tr>
+                    ))}
+                    {!detailsLoading && (!details?.articoli || details.articoli.length === 0) ? (
+                      <tr>
+                        <td colSpan={4} className="px-3 py-8 text-center text-xs text-[var(--muted)]">
+                          Nessun articolo associato al DDT selezionato.
+                        </td>
+                      </tr>
+                    ) : null}
+                  </tbody>
+                </table>
+              </div>
             </div>
           </div>
         </div>

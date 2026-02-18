@@ -1,6 +1,7 @@
 import express from "express";
 import cors from "cors";
 import morgan from "morgan";
+import compression from "compression";
 import path from "path";
 import { fileURLToPath } from "url";
 
@@ -40,6 +41,12 @@ app.use(
       return callback(new Error("Origine non consentita"));
     },
     credentials: true
+  })
+);
+app.use(
+  compression({
+    level: 6,
+    threshold: 1024
   })
 );
 app.use(express.json({ limit: "10mb" }));

@@ -371,6 +371,9 @@ router.get("/giacenze", async (req, res) => {
     const page = Math.max(parseInt(req.query.page || "1", 10), 1);
     const limit = Math.min(Math.max(parseInt(req.query.limit || "50", 10), 10), 5000);
     const onlyAlerts = String(req.query.alerts || "0") === "1";
+    const sortBy = String(req.query.sortBy || "codiceArticolo").trim();
+    const sortDirRaw = String(req.query.sortDir || "asc").toLowerCase();
+    const sortDir = sortDirRaw === "desc" ? -1 : 1;
     const skip = (page - 1) * limit;
 
     const match = {};
@@ -389,11 +392,23 @@ router.get("/giacenze", async (req, res) => {
       query.$expr = { $lt: ["$giacenzaFisica", { $ifNull: ["$giacenzaMinima", 0] }] };
     }
 
+    const sortableFields = new Set([
+      "codiceArticolo",
+      "descrizione",
+      "giacenzaFiscale",
+      "giacenzaFisica",
+      "unitaMisura",
+      "giacenzaMinima",
+      "alert"
+    ]);
+    const sortField = sortableFields.has(sortBy) ? sortBy : "codiceArticolo";
+    const sort = sortField === "alert" ? { giacenzaFisica: sortDir, giacenzaMinima: sortDir } : { [sortField]: sortDir };
+
     const [data, total] = await Promise.all([
       db
         .collection("warehouse_giacenze")
         .find(query, { projection: { _id: 0 } })
-        .sort({ codiceArticolo: 1 })
+        .sort(sort)
         .skip(skip)
         .limit(limit)
         .toArray(),
@@ -486,6 +501,173 @@ router.get("/giacenze/seriali", async (req, res) => {
     res.json({ codice, rows, expectedQty });
   } catch (error) {
     res.status(500).json({ errore: "Errore caricamento seriali", dettaglio: error.message });
+  }
+});
+
+router.get("/movimenti", async (req, res) => {
+  try {
+    ensureIndexesInBackground();
+    const db = getWarehouseDb();
+    const page = Math.max(parseInt(req.query.page || "1", 10), 1);
+    const limit = Math.min(Math.max(parseInt(req.query.limit || "50", 10), 10), 500);
+    const skip = (page - 1) * limit;
+    const search = String(req.query.search || "").trim();
+    const codiceArticolo = normalizeWarehouseCode(req.query.codiceArticolo || "");
+    const sortBy = String(req.query.sortBy || "data").trim();
+    const sortDir = String(req.query.sortDir || "desc").toLowerCase() === "asc" ? 1 : -1;
+    const sortMap = {
+      data: "Data",
+      codDdt: "Cod_DDT",
+      codiceArticolo: "Cod_Articolo",
+      descrizioneArticolo: "Cod_Articolo",
+      descrizioneMovimento: "Cod_Causale",
+      quantita: "QT movimentata",
+      unitaMisura: "Unità di Misura",
+      costoAcquisto: "Costo di Acquisto",
+      depositoIniziale: "Cod_Causale",
+      depositoFinale: "Cod_Causale",
+      prezzoVendita: "Prezzo di Vendita",
+      nominativo: "Riferimento",
+      varFisica: "Cod_Causale",
+      varFiscale: "Cod_Causale",
+      partNumber: "Part Number",
+      note: "Note",
+      codMovimento: "cod"
+    };
+    const sortField = sortMap[sortBy] || "Data";
+    const sortSpec = { [sortField]: sortDir, cod: sortDir };
+
+    const match = {};
+    if (codiceArticolo) {
+      match.Cod_Articolo = codiceArticolo;
+    }
+    if (search) {
+      const escaped = search.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+      const re = new RegExp(escaped, "i");
+      const articleCodeRows = await db
+        .collection("Codici_di_magazzino")
+        .find({ Descrizione: re }, { projection: { _id: 0, "Codice Articolo": 1 } })
+        .limit(2000)
+        .toArray();
+      const articleCodesFromDescription = Array.from(
+        new Set(articleCodeRows.map((row) => normalizeWarehouseCode(row["Codice Articolo"])).filter(Boolean))
+      );
+      match.$or = [
+        { Cod_Articolo: re },
+        { Riferimento: re },
+        { Note: re },
+        { "Part Number": re },
+        ...(articleCodesFromDescription.length > 0 ? [{ Cod_Articolo: { $in: articleCodesFromDescription } }] : [])
+      ];
+    }
+
+    const [rows, total] = await Promise.all([
+      db
+        .collection("Movimenti di magazzino")
+        .find(match, { projection: { _id: 0 } })
+        .sort(sortSpec)
+        .skip(skip)
+        .limit(limit)
+        .toArray(),
+      db.collection("Movimenti di magazzino").countDocuments(match)
+    ]);
+
+    const causaliCodes = Array.from(new Set(rows.map((r) => Number(r.Cod_Causale)).filter(Number.isFinite)));
+    const articleCodes = Array.from(new Set(rows.map((r) => normalizeWarehouseCode(r.Cod_Articolo)).filter(Boolean)));
+    const movementCodes = Array.from(new Set(rows.map((r) => Number(r.cod)).filter(Number.isFinite)));
+
+    const [causali, articoli, allocazioni, depositi] = await Promise.all([
+      causaliCodes.length
+        ? db
+            .collection("Causali di magazzino")
+            .find(
+              { cod: { $in: causaliCodes } },
+              {
+                projection: {
+                  _id: 0,
+                  cod: 1,
+                  "Descrizione Movimento": 1,
+                  "Azione su Giacenza Fisica": 1,
+                  "Azione su Giacenza Fiscale": 1,
+                  "Deposito Iniziale": 1,
+                  "Deposito Finale": 1
+                }
+              }
+            )
+            .toArray()
+        : [],
+      articleCodes.length
+        ? db
+            .collection("Codici_di_magazzino")
+            .find(
+              { "Codice Articolo": { $in: articleCodes } },
+              { projection: { _id: 0, "Codice Articolo": 1, Descrizione: 1 } }
+            )
+            .toArray()
+        : [],
+      movementCodes.length
+        ? db
+            .collection("Allocazione Magazzino")
+            .find({ cod_movimento: { $in: movementCodes } }, { projection: { _id: 0, cod_movimento: 1, Seriale: 1 } })
+            .toArray()
+        : [],
+      db
+        .collection("Depositi_Fiscali")
+        .find({}, { projection: { _id: 0, Cod: 1, Descrizione: 1 } })
+        .toArray()
+    ]);
+
+    const causaliMap = new Map(causali.map((row) => [Number(row.cod), row]));
+    const articoliMap = new Map(articoli.map((row) => [normalizeWarehouseCode(row["Codice Articolo"]), String(row.Descrizione || "")]));
+    const depositiMap = new Map(depositi.map((row) => [Number(row.Cod), String(row.Descrizione || "")]));
+    const serialiMap = new Map();
+    for (const row of allocazioni) {
+      const movCode = Number(row.cod_movimento);
+      const seriale = normalizeSerial(row.Seriale);
+      if (!Number.isFinite(movCode) || !seriale) continue;
+      const current = serialiMap.get(movCode) || [];
+      if (!current.includes(seriale)) current.push(seriale);
+      serialiMap.set(movCode, current);
+    }
+
+    const data = rows.map((row) => {
+      const movCode = Number(row.cod);
+      const seriali = serialiMap.get(movCode) || [];
+      const causaleRow = causaliMap.get(Number(row.Cod_Causale)) || null;
+      const depInizialeCod = Number(causaleRow?.["Deposito Iniziale"]);
+      const depFinaleCod = Number(causaleRow?.["Deposito Finale"]);
+      const unita =
+        row["UnitÃƒÆ’Ã‚Â  di Misura"] ||
+        row["UnitÃƒÂ  di Misura"] ||
+        row["UnitÃ  di Misura"] ||
+        row["UnitÃ  di misura"] ||
+        "";
+      return {
+        codMovimento: movCode,
+        data: row.Data || null,
+        codDdt: Number(row.Cod_DDT || 0) || 0,
+        codiceArticolo: normalizeWarehouseCode(row.Cod_Articolo),
+        descrizioneArticolo:
+          articoliMap.get(normalizeWarehouseCode(row.Cod_Articolo)) || String(row.Descrizione || "").trim(),
+        descrizioneMovimento: String(causaleRow?.["Descrizione Movimento"] || ""),
+        quantita: Number(row["QT movimentata"] || 0),
+        unitaMisura: String(unita || "").trim(),
+        seriale: seriali.join(", "),
+        nominativo: String(row.Riferimento || ""),
+        costoAcquisto: Number(row["Costo di Acquisto"] || 0),
+        prezzoVendita: Number(row["Prezzo di Vendita"] || 0),
+        depositoIniziale: depositiMap.get(depInizialeCod) || (Number.isFinite(depInizialeCod) ? String(depInizialeCod) : ""),
+        depositoFinale: depositiMap.get(depFinaleCod) || (Number.isFinite(depFinaleCod) ? String(depFinaleCod) : ""),
+        varFisica: Number(causaleRow?.["Azione su Giacenza Fisica"] || 0),
+        varFiscale: Number(causaleRow?.["Azione su Giacenza Fiscale"] || 0),
+        note: String(row.Note || ""),
+        partNumber: String(row["Part Number"] || "")
+      };
+    });
+
+    return res.json({ page, limit, total, data });
+  } catch (error) {
+    return res.status(500).json({ errore: "Errore caricamento movimenti", dettaglio: error.message });
   }
 });
 

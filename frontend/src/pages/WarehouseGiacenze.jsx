@@ -1,12 +1,18 @@
 import { Fragment, memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import AppLayout from "../components/AppLayout.jsx";
 import ContextMenu from "../components/ui/ContextMenu.jsx";
+import useDebouncedCallback from "../hooks/useDebouncedCallback.js";
 
 const API_BASE = import.meta.env.VITE_API_URL || "http://localhost:3000";
 
 const formatNumber = (value) => {
   if (value === null || value === undefined) return "-";
   return Number(value).toLocaleString("it-IT");
+};
+const formatCurrency = (value) => {
+  const num = Number(value);
+  if (!Number.isFinite(num)) return "-";
+  return new Intl.NumberFormat("it-IT", { style: "currency", currency: "EUR" }).format(num);
 };
 
 const getLocalDateTimeValue = () => {
@@ -43,6 +49,24 @@ const NEW_ARTICLE_COST_CENTER_OPTIONS = [
   "VENDITA RX"
 ];
 const NEW_ARTICLE_UNIT_OPTIONS = ["QT", "LITRI", "KG", "ORE", "METRI"];
+const MOVEMENTS_COLUMN_DEFAULTS = {
+  data: 130,
+  codDdt: 110,
+  codiceArticolo: 150,
+  descrizioneArticolo: 280,
+  descrizioneMovimento: 260,
+  unitaMisura: 90,
+  quantita: 80,
+  costoAcquisto: 130,
+  depositoIniziale: 150,
+  depositoFinale: 150,
+  nominativo: 260,
+  varFisica: 100,
+  varFiscale: 100,
+  prezzoVendita: 150,
+  partNumber: 140,
+  note: 220
+};
 const getInitialNewArticleForm = () => ({
   descrizione: "",
   codiceArticolo: "",
@@ -155,12 +179,27 @@ export default function WarehouseGiacenze() {
   const strumentiBtnRef = useRef(null);
   const supplierComboRef = useRef(null);
   const mainSearchInputRef = useRef(null);
+  const movementsSearchInputRef = useRef(null);
   const articleSearchInputRef = useRef(null);
-  const mainSearchDebounceRef = useRef(null);
-  const articleSearchDebounceRef = useRef(null);
+  const giacenzeFetchAbortRef = useRef(null);
+  const movementsFetchAbortRef = useRef(null);
   const supplierDefaultedRef = useRef(false);
   const [menuPos, setMenuPos] = useState({ left: 0, top: 0, width: 0 });
   const [rowMenu, setRowMenu] = useState({ open: false, x: 0, y: 0, item: null });
+  const [movementsModalOpen, setMovementsModalOpen] = useState(false);
+  const [movementsFilterCode, setMovementsFilterCode] = useState("");
+  const [movementsRows, setMovementsRows] = useState([]);
+  const [movementsLoading, setMovementsLoading] = useState(false);
+  const [movementsError, setMovementsError] = useState("");
+  const [movementsDebouncedSearch, setMovementsDebouncedSearch] = useState("");
+  const [movementsPage, setMovementsPage] = useState(1);
+  const [movementsLimit, setMovementsLimit] = useState(50);
+  const [movementsTotal, setMovementsTotal] = useState(0);
+  const [movementsSortKey, setMovementsSortKey] = useState("data");
+  const [movementsSortDir, setMovementsSortDir] = useState("desc");
+  const [movementsColumnWidths, setMovementsColumnWidths] = useState(MOVEMENTS_COLUMN_DEFAULTS);
+  const movementsResizeRef = useRef(null);
+  const movementsCacheRef = useRef(new Map());
   const [sortKey, setSortKey] = useState("codiceArticolo");
   const [sortDir, setSortDir] = useState(null);
   const [caricoScaricoMode, setCaricoScaricoMode] = useState("");
@@ -218,51 +257,35 @@ export default function WarehouseGiacenze() {
   });
   const scanPollRef = useRef(null);
   const ddtPdfInputRef = useRef(null);
+  const [debouncedMainSearchUpdate, cancelDebouncedMainSearchUpdate] = useDebouncedCallback(
+    (next) => setDebouncedSearch(String(next || "").trim()),
+    168
+  );
+  const [debouncedArticleSearchUpdate, cancelDebouncedArticleSearchUpdate] = useDebouncedCallback(
+    (next) => setArticleSearch(String(next || "")),
+    168
+  );
+  const [debouncedMovementsSearchUpdate, cancelDebouncedMovementsSearchUpdate] = useDebouncedCallback(
+    (next) => {
+      setMovementsPage(1);
+      setMovementsDebouncedSearch(String(next || "").trim());
+    },
+    320
+  );
+  const [debouncedSuppliersFetch, cancelDebouncedSuppliersFetch] = useDebouncedCallback((term) => {
+    fetchSuppliers(String(term || "").trim());
+  }, 350);
 
   const [limit, setLimit] = useState(50);
-  const filteredItems = useMemo(() => {
-    const term = debouncedSearch.trim().toLowerCase();
-    return items.filter((item) => {
-      const code = String(item.codiceArticolo || "").toLowerCase();
-      const desc = String(item.descrizione || "").toLowerCase();
-      const min = Number(item.giacenzaMinima || 0);
-      const qty = Number(item.giacenzaFisica || 0);
-      const isAlert = qty < min;
-      const matchesSearch = !term || code.includes(term) || desc.includes(term);
-      return matchesSearch && (!alertsOnly || isAlert);
-    });
-  }, [items, debouncedSearch, alertsOnly]);
-
-  const sortedItems = useMemo(() => {
-    if (!sortDir) return filteredItems;
-    const copy = [...filteredItems];
-    const dir = sortDir === "asc" ? 1 : -1;
-    copy.sort((a, b) => {
-      const aVal =
-        sortKey === "alert"
-          ? Number((a?.giacenzaFisica || 0) < (a?.giacenzaMinima || 0))
-          : a?.[sortKey];
-      const bVal =
-        sortKey === "alert"
-          ? Number((b?.giacenzaFisica || 0) < (b?.giacenzaMinima || 0))
-          : b?.[sortKey];
-      if (aVal === null || aVal === undefined) return 1 * dir;
-      if (bVal === null || bVal === undefined) return -1 * dir;
-      if (typeof aVal === "number" && typeof bVal === "number") {
-        return (aVal - bVal) * dir;
-      }
-      return String(aVal).localeCompare(String(bVal), "it", { numeric: true, sensitivity: "base" }) * dir;
-    });
-    return copy;
-  }, [filteredItems, sortKey, sortDir]);
-
-  const total = sortedItems.length;
-  const effectiveLimit = limit === "all" ? Math.max(total, 1) : limit;
+  const [totalItems, setTotalItems] = useState(0);
+  const total = Number(totalItems || 0);
+  const effectiveLimit = Number(limit || 50);
   const totalPages = useMemo(() => Math.max(Math.ceil(total / effectiveLimit), 1), [total, effectiveLimit]);
-  const pagedItems = useMemo(() => {
-    const start = (page - 1) * effectiveLimit;
-    return sortedItems.slice(start, start + effectiveLimit);
-  }, [sortedItems, page, effectiveLimit]);
+  const pagedItems = items;
+  const movementsTotalPages = useMemo(
+    () => Math.max(Math.ceil(Number(movementsTotal || 0) / Number(movementsLimit || 1)), 1),
+    [movementsTotal, movementsLimit]
+  );
 
   const hasInvalidMovementQuantities = useMemo(
     () => movementItems.some((item) => !Number.isFinite(Number(item?.quantita)) || Number(item.quantita) < 1),
@@ -270,24 +293,111 @@ export default function WarehouseGiacenze() {
   );
 
   const fetchData = async () => {
+    if (giacenzeFetchAbortRef.current) {
+      giacenzeFetchAbortRef.current.abort();
+    }
+    const controller = new AbortController();
+    giacenzeFetchAbortRef.current = controller;
     setLoading(true);
     setError("");
     try {
       const params = new URLSearchParams({
-        page: "1",
-        limit: "5000",
-        search: ""
+        page: String(page),
+        limit: String(effectiveLimit),
+        search: debouncedSearch,
+        alerts: alertsOnly ? "1" : "0",
+        sortBy: sortKey,
+        sortDir: sortDir || "asc"
       });
-      const res = await fetch(`${API_BASE}/api/warehouse/giacenze?${params.toString()}`);
+      const res = await fetch(`${API_BASE}/api/warehouse/giacenze?${params.toString()}`, { signal: controller.signal });
       if (!res.ok) throw new Error("Errore caricamento dati");
       const payload = await res.json();
       setItems(payload.data || []);
+      setTotalItems(Number(payload.total || 0));
     } catch (err) {
+      if (err?.name === "AbortError") return;
       setError(err.message || "Errore imprevisto");
+      setItems([]);
+      setTotalItems(0);
     } finally {
+      if (giacenzeFetchAbortRef.current === controller) {
+        giacenzeFetchAbortRef.current = null;
+      }
       setLoading(false);
     }
   };
+
+  const fetchMovements = useCallback(async (options = {}) => {
+    if (!movementsModalOpen) return;
+    if (movementsFetchAbortRef.current) {
+      movementsFetchAbortRef.current.abort();
+    }
+    const controller = new AbortController();
+    movementsFetchAbortRef.current = controller;
+    const force = options?.force === true;
+    const cacheKey = JSON.stringify({
+      page: movementsPage,
+      limit: movementsLimit,
+      search: movementsDebouncedSearch,
+      codiceArticolo: movementsFilterCode || "",
+      sortBy: movementsSortKey,
+      sortDir: movementsSortDir
+    });
+    if (!force && movementsCacheRef.current.has(cacheKey)) {
+      const cached = movementsCacheRef.current.get(cacheKey);
+      setMovementsRows(Array.isArray(cached?.data) ? cached.data : []);
+      setMovementsTotal(Number(cached?.total || 0));
+      return;
+    }
+    setMovementsLoading(true);
+    setMovementsError("");
+    try {
+      const params = new URLSearchParams({
+        page: String(movementsPage),
+        limit: String(movementsLimit),
+        search: movementsDebouncedSearch,
+        sortBy: movementsSortKey,
+        sortDir: movementsSortDir
+      });
+      if (movementsFilterCode) {
+        params.set("codiceArticolo", movementsFilterCode);
+      }
+      const res = await fetch(`${API_BASE}/api/warehouse/movimenti?${params.toString()}`, { signal: controller.signal });
+      if (!res.ok) throw new Error("Errore caricamento movimenti");
+      const payload = await res.json();
+      setMovementsRows(Array.isArray(payload?.data) ? payload.data : []);
+      setMovementsTotal(Number(payload?.total || 0));
+      movementsCacheRef.current.set(cacheKey, {
+        total: Number(payload?.total || 0),
+        data: Array.isArray(payload?.data) ? payload.data : []
+      });
+    } catch (err) {
+      if (err?.name === "AbortError") return;
+      setMovementsError(err.message || "Errore caricamento movimenti");
+      setMovementsRows([]);
+      setMovementsTotal(0);
+    } finally {
+      if (movementsFetchAbortRef.current === controller) {
+        movementsFetchAbortRef.current = null;
+      }
+      setMovementsLoading(false);
+    }
+  }, [movementsModalOpen, movementsPage, movementsLimit, movementsDebouncedSearch, movementsFilterCode, movementsSortKey, movementsSortDir]);
+
+  const openMovementsModal = useCallback((code = "") => {
+    setOpenMenu("");
+    setRowMenu({ open: false, x: 0, y: 0, item: null });
+    setMovementsFilterCode(String(code || "").trim());
+    setMovementsDebouncedSearch("");
+    setMovementsPage(1);
+    setMovementsLimit(50);
+    setMovementsSortKey("data");
+    setMovementsSortDir("desc");
+    setMovementsModalOpen(true);
+    if (movementsSearchInputRef.current) {
+      movementsSearchInputRef.current.value = "";
+    }
+  }, []);
 
   const fetchSerials = async (codice) => {
     if (!codice || serialsByCode[codice] || serialsLoading[codice]) return;
@@ -306,34 +416,18 @@ export default function WarehouseGiacenze() {
 
   const handleMainSearchInput = (event) => {
     const next = String(event.target.value || "");
-    if (mainSearchDebounceRef.current) {
-      clearTimeout(mainSearchDebounceRef.current);
-    }
-    mainSearchDebounceRef.current = setTimeout(() => {
-      setDebouncedSearch(next);
-      mainSearchDebounceRef.current = null;
-    }, 168);
+    debouncedMainSearchUpdate(next);
   };
 
   const handleArticleSearchInput = (event) => {
     const next = String(event.target.value || "");
-    if (articleSearchDebounceRef.current) {
-      clearTimeout(articleSearchDebounceRef.current);
-    }
-    articleSearchDebounceRef.current = setTimeout(() => {
-      setArticleSearch(next);
-      articleSearchDebounceRef.current = null;
-    }, 168);
+    debouncedArticleSearchUpdate(next);
   };
 
   useEffect(() => {
     if (!caricoWizardOpen) return;
-    const term = supplierSearch.trim();
-    const timer = setTimeout(() => {
-      fetchSuppliers(term);
-    }, 350);
-    return () => clearTimeout(timer);
-  }, [supplierSearch, caricoWizardOpen]);
+    debouncedSuppliersFetch(supplierSearch);
+  }, [supplierSearch, caricoWizardOpen, debouncedSuppliersFetch]);
 
   useEffect(() => {
     if (!caricoWizardOpen) return;
@@ -343,17 +437,29 @@ export default function WarehouseGiacenze() {
 
   useEffect(() => {
     fetchData();
-  }, []);
+  }, [page, effectiveLimit, debouncedSearch, alertsOnly, sortKey, sortDir]);
 
   useEffect(() => {
     setPage(1);
   }, [debouncedSearch, alertsOnly, limit, sortKey, sortDir]);
 
   useEffect(() => {
+    if (!movementsModalOpen) return;
+    fetchMovements();
+  }, [movementsModalOpen, fetchMovements]);
+
+  useEffect(() => {
     if (page > totalPages) {
       setPage(totalPages);
     }
   }, [page, totalPages]);
+
+  useEffect(() => {
+    if (!movementsModalOpen) return;
+    if (movementsPage > movementsTotalPages) {
+      setMovementsPage(movementsTotalPages);
+    }
+  }, [movementsModalOpen, movementsPage, movementsTotalPages]);
 
   useEffect(() => {
     if (!caricoWizardOpen) {
@@ -376,11 +482,20 @@ export default function WarehouseGiacenze() {
 
   useEffect(() => {
     return () => {
-      if (mainSearchDebounceRef.current) clearTimeout(mainSearchDebounceRef.current);
-      if (articleSearchDebounceRef.current) clearTimeout(articleSearchDebounceRef.current);
+      cancelDebouncedMainSearchUpdate();
+      cancelDebouncedArticleSearchUpdate();
+      cancelDebouncedMovementsSearchUpdate();
+      cancelDebouncedSuppliersFetch();
+      if (giacenzeFetchAbortRef.current) giacenzeFetchAbortRef.current.abort();
+      if (movementsFetchAbortRef.current) movementsFetchAbortRef.current.abort();
       if (scanPollRef.current) clearInterval(scanPollRef.current);
     };
-  }, []);
+  }, [
+    cancelDebouncedMainSearchUpdate,
+    cancelDebouncedArticleSearchUpdate,
+    cancelDebouncedMovementsSearchUpdate,
+    cancelDebouncedSuppliersFetch
+  ]);
 
   useEffect(() => {
     if (selectedArticle?.unitaMisura) {
@@ -916,8 +1031,9 @@ export default function WarehouseGiacenze() {
         const payload = await res.json().catch(() => ({}));
         throw new Error(payload?.errore || "Errore salvataggio carico");
       }
+      movementsCacheRef.current.clear();
       setCaricoWizardOpen(false);
-      fetchData({ page, limit, search: debouncedSearch, alerts: alertsOnly });
+      fetchData();
     } catch (err) {
       setCaricoError(err.message || "Errore salvataggio carico");
     } finally {
@@ -982,6 +1098,40 @@ export default function WarehouseGiacenze() {
     if (sortKey !== key || !sortDir) return "fa-sort";
     return sortDir === "asc" ? "fa-sort-up" : "fa-sort-down";
   };
+  const movementsSortIndicator = (key) => {
+    if (movementsSortKey !== key) return "fa-sort";
+    return movementsSortDir === "asc" ? "fa-sort-up" : "fa-sort-down";
+  };
+  const handleMovementsSort = (key) => {
+    if (movementsSortKey === key) {
+      setMovementsSortDir((prev) => (prev === "asc" ? "desc" : "asc"));
+      setMovementsPage(1);
+      return;
+    }
+    setMovementsSortKey(key);
+    setMovementsSortDir("asc");
+    setMovementsPage(1);
+  };
+  const startMovementColumnResize = (event, key) => {
+    event.preventDefault();
+    event.stopPropagation();
+    const initialWidth = Number(movementsColumnWidths?.[key] || MOVEMENTS_COLUMN_DEFAULTS[key] || 120);
+    movementsResizeRef.current = { key, startX: event.clientX, startWidth: initialWidth };
+    const onMouseMove = (moveEvent) => {
+      if (!movementsResizeRef.current) return;
+      const { key: activeKey, startX, startWidth } = movementsResizeRef.current;
+      const delta = moveEvent.clientX - startX;
+      const next = Math.max(70, startWidth + delta);
+      setMovementsColumnWidths((prev) => ({ ...prev, [activeKey]: next }));
+    };
+    const onMouseUp = () => {
+      movementsResizeRef.current = null;
+      window.removeEventListener("mousemove", onMouseMove);
+      window.removeEventListener("mouseup", onMouseUp);
+    };
+    window.addEventListener("mousemove", onMouseMove);
+    window.addEventListener("mouseup", onMouseUp);
+  };
 
   useEffect(() => {
     const closeRowMenu = () => setRowMenu({ open: false, x: 0, y: 0, item: null });
@@ -1043,6 +1193,10 @@ export default function WarehouseGiacenze() {
                       if (item.label === "Carico Merce") {
                         setOpenMenu("");
                         openCausaliPicker("carico");
+                        return;
+                      }
+                      if (item.label === "Lista Movimenti") {
+                        openMovementsModal("");
                       }
                     }}
                   >
@@ -1150,8 +1304,7 @@ export default function WarehouseGiacenze() {
                 <select
                   value={limit}
                   onChange={(event) => {
-                    const value = event.target.value;
-                    setLimit(value === "all" ? "all" : parseInt(value, 10));
+                    setLimit(parseInt(event.target.value, 10));
                   }}
                   className="rounded-md border border-[var(--border)] bg-[var(--surface)] px-2 py-1 text-xs text-[var(--page-fg)]"
                 >
@@ -1159,7 +1312,6 @@ export default function WarehouseGiacenze() {
                   <option value="20">20</option>
                   <option value="50">50</option>
                   <option value="100">100</option>
-                  <option value="all">Tutti</option>
                 </select>
               </div>
               <button
@@ -1252,7 +1404,7 @@ export default function WarehouseGiacenze() {
 
         <div className="mt-4 min-h-0 flex-1 overflow-auto rounded-md border border-[var(--border)]">
           <div className="w-full">
-            <table className="warehouse-table table-dense w-full table-fixed border-collapse text-xs">
+            <table className="warehouse-table warehouse-column-stripes table-dense w-full table-fixed border-collapse text-xs">
               <thead className="sticky top-0 z-10 bg-[var(--surface-strong)]">
                 <tr className="text-left text-[10px] uppercase tracking-[0.2em] text-[var(--muted)]">
                   <th className="h-10 px-3 w-10"></th>
@@ -1462,6 +1614,14 @@ export default function WarehouseGiacenze() {
             <i className="fa-solid fa-eye text-[12px] text-[var(--muted)]" aria-hidden="true" />
             Visualizza
           </button>
+          <button
+            type="button"
+            className="flex w-full items-center gap-2 rounded-md px-3 py-2 text-sm hover:bg-[var(--hover)]"
+            onClick={() => openMovementsModal(rowMenu.item?.codiceArticolo || "")}
+          >
+            <i className="fa-solid fa-list text-[12px] text-[var(--muted)]" aria-hidden="true" />
+            Vedi movimenti
+          </button>
           <div className="my-1 h-px w-full bg-[var(--border)]" aria-hidden="true" />
           <button
             type="button"
@@ -1508,6 +1668,331 @@ export default function WarehouseGiacenze() {
             Nuovo
           </button>
       </ContextMenu>
+
+      {movementsModalOpen ? (
+        <div
+          className="fixed inset-0 z-[61] flex items-center justify-center bg-black/70 px-3 py-3 sm:px-4 sm:py-6"
+          onMouseDown={() => setMovementsModalOpen(false)}
+        >
+          <div
+            className="flex h-[94dvh] w-[98vw] max-w-[1900px] min-h-0 flex-col overflow-hidden rounded-xl border border-[var(--border)] bg-[var(--surface)] shadow-xl"
+            onMouseDown={(event) => event.stopPropagation()}
+          >
+            <div className="flex items-start justify-between gap-4 border-b border-[var(--border)] px-4 py-3">
+              <div>
+                <p className="text-xs uppercase tracking-[0.2em] text-[var(--muted)]">Movimenti di magazzino</p>
+                <h2 className="mt-1 text-xl font-semibold">Lista Movimenti</h2>
+                {movementsFilterCode ? (
+                  <p className="mt-1 text-xs text-[var(--muted)]">
+                    Filtro articolo: <span className="font-semibold text-[var(--page-fg)]">{movementsFilterCode}</span>
+                  </p>
+                ) : null}
+              </div>
+              <button
+                type="button"
+                className="flex h-9 w-9 items-center justify-center rounded-md border border-[var(--border)] text-[var(--muted)] hover:bg-[var(--hover)]"
+                onClick={() => setMovementsModalOpen(false)}
+                aria-label="Chiudi lista movimenti"
+              >
+                <i className="fa-solid fa-xmark" aria-hidden="true" />
+              </button>
+            </div>
+
+            <div className="flex min-h-0 flex-1 flex-col p-4">
+              <div className="flex min-w-0 flex-wrap items-center gap-3">
+                <div className="min-w-0 flex-1">
+                  <div className="flex items-center rounded-md border border-[var(--border)] bg-[var(--surface)] px-3 py-2">
+                    <button
+                      type="button"
+                      onClick={() => fetchMovements({ force: true })}
+                      disabled={movementsLoading}
+                      className="flex h-8 w-8 min-h-[32px] min-w-[32px] items-center justify-center rounded-md text-[var(--muted)] transition hover:bg-[var(--hover)] disabled:cursor-not-allowed disabled:opacity-60"
+                      aria-label="Aggiorna movimenti"
+                    >
+                      <i className={`fa-solid fa-rotate-right text-[12px] ${movementsLoading ? "animate-spin" : ""}`} aria-hidden="true" />
+                    </button>
+                    <span className="mx-2 h-5 w-px bg-[var(--border)]" aria-hidden="true" />
+                    <i className="fa-solid fa-magnifying-glass text-[12px] text-[var(--muted)]" aria-hidden="true" />
+                    <input
+                      type="text"
+                      ref={movementsSearchInputRef}
+                      defaultValue=""
+                      onChange={(event) => debouncedMovementsSearchUpdate(event.target.value)}
+                      placeholder="Cerca codice, riferimento, note, part number"
+                      className="ml-3 w-full bg-transparent text-sm outline-none"
+                    />
+                  </div>
+                </div>
+                <div className="flex shrink-0 items-center gap-2 text-sm">
+                  <div className="flex items-center gap-2 text-xs text-[var(--muted)]">
+                    <span>Righe</span>
+                    <select
+                      value={movementsLimit}
+                      onChange={(event) => {
+                        setMovementsPage(1);
+                        setMovementsLimit(parseInt(event.target.value, 10));
+                      }}
+                      className="rounded-md border border-[var(--border)] bg-[var(--surface)] px-2 py-1 text-xs text-[var(--page-fg)]"
+                    >
+                      <option value="20">20</option>
+                      <option value="50">50</option>
+                      <option value="100">100</option>
+                      <option value="200">200</option>
+                    </select>
+                  </div>
+                  <button
+                    type="button"
+                    disabled={movementsPage === 1}
+                    onClick={() => setMovementsPage((prev) => Math.max(prev - 1, 1))}
+                    className="rounded-md border border-[var(--border)] px-3 py-1 disabled:opacity-50"
+                  >
+                    Prev
+                  </button>
+                  <span className="text-[var(--muted)]">
+                    {movementsPage} / {movementsTotalPages}
+                  </span>
+                  <button
+                    type="button"
+                    disabled={movementsPage >= movementsTotalPages}
+                    onClick={() => setMovementsPage((prev) => Math.min(prev + 1, movementsTotalPages))}
+                    className="rounded-md border border-[var(--border)] px-3 py-1 disabled:opacity-50"
+                  >
+                    Next
+                  </button>
+                </div>
+              </div>
+
+              <p className="mt-3 text-sm text-[var(--muted)]">
+                Da{" "}
+                <span className="text-[var(--page-fg)]">
+                  {movementsTotal === 0 ? 0 : formatNumber((movementsPage - 1) * movementsLimit + 1)}
+                </span>{" "}
+                a{" "}
+                <span className="text-[var(--page-fg)]">
+                  {movementsTotal === 0 ? 0 : formatNumber(Math.min(movementsPage * movementsLimit, movementsTotal))}
+                </span>{" "}
+                movimenti di <span className="text-[var(--page-fg)]">{formatNumber(movementsTotal)}</span>
+              </p>
+
+              {movementsError ? <p className="mt-2 text-sm text-rose-500">{movementsError}</p> : null}
+
+              <div className="mt-3 min-h-0 flex-1 overflow-auto rounded-md border border-[var(--border)]">
+                <table className="warehouse-table table-dense min-w-[2200px] w-full table-fixed text-xs">
+                  <colgroup>
+                    <col style={{ width: `${movementsColumnWidths.data}px` }} />
+                    <col style={{ width: `${movementsColumnWidths.codDdt}px` }} />
+                    <col style={{ width: `${movementsColumnWidths.codiceArticolo}px` }} />
+                    <col style={{ width: `${movementsColumnWidths.descrizioneArticolo}px` }} />
+                    <col style={{ width: `${movementsColumnWidths.descrizioneMovimento}px` }} />
+                    <col style={{ width: `${movementsColumnWidths.unitaMisura}px` }} />
+                    <col style={{ width: `${movementsColumnWidths.quantita}px` }} />
+                    <col style={{ width: `${movementsColumnWidths.costoAcquisto}px` }} />
+                    <col style={{ width: `${movementsColumnWidths.depositoIniziale}px` }} />
+                    <col style={{ width: `${movementsColumnWidths.depositoFinale}px` }} />
+                    <col style={{ width: `${movementsColumnWidths.nominativo}px` }} />
+                    <col style={{ width: `${movementsColumnWidths.varFisica}px` }} />
+                    <col style={{ width: `${movementsColumnWidths.varFiscale}px` }} />
+                    <col style={{ width: `${movementsColumnWidths.prezzoVendita}px` }} />
+                    <col style={{ width: `${movementsColumnWidths.partNumber}px` }} />
+                    <col style={{ width: `${movementsColumnWidths.note}px` }} />
+                  </colgroup>
+                  <thead className="sticky top-0 z-10 bg-[var(--surface-strong)]">
+                    <tr className="text-left text-[10px] uppercase tracking-[0.2em] text-[var(--muted)]">
+                      <th className="relative px-3 py-2 pr-5 whitespace-nowrap overflow-hidden">
+                        <button type="button" className="flex max-w-full items-center gap-2 truncate" onClick={() => handleMovementsSort("data")}>
+                          Data
+                          <i className={`fa-solid ${movementsSortIndicator("data")} text-[10px]`} aria-hidden="true" />
+                        </button>
+                        <span className="absolute right-0 top-0 h-full w-2 cursor-col-resize" onMouseDown={(event) => startMovementColumnResize(event, "data")} />
+                      </th>
+                      <th className="relative px-3 py-2 pr-5 whitespace-nowrap overflow-hidden">
+                        <button type="button" className="flex max-w-full items-center gap-2 truncate" onClick={() => handleMovementsSort("codDdt")}>
+                          COD DDT
+                          <i className={`fa-solid ${movementsSortIndicator("codDdt")} text-[10px]`} aria-hidden="true" />
+                        </button>
+                        <span className="absolute right-0 top-0 h-full w-2 cursor-col-resize" onMouseDown={(event) => startMovementColumnResize(event, "codDdt")} />
+                      </th>
+                      <th className="relative px-3 py-2 pr-5 whitespace-nowrap overflow-hidden">
+                        <button type="button" className="flex max-w-full items-center gap-2 truncate" onClick={() => handleMovementsSort("codiceArticolo")}>
+                          Cod Articolo
+                          <i className={`fa-solid ${movementsSortIndicator("codiceArticolo")} text-[10px]`} aria-hidden="true" />
+                        </button>
+                        <span className="absolute right-0 top-0 h-full w-2 cursor-col-resize" onMouseDown={(event) => startMovementColumnResize(event, "codiceArticolo")} />
+                      </th>
+                      <th className="relative px-3 py-2 pr-5 whitespace-nowrap overflow-hidden">
+                        <button type="button" className="flex max-w-full items-center gap-2 truncate" onClick={() => handleMovementsSort("descrizioneArticolo")}>
+                          Descrizione
+                          <i className={`fa-solid ${movementsSortIndicator("descrizioneArticolo")} text-[10px]`} aria-hidden="true" />
+                        </button>
+                        <span className="absolute right-0 top-0 h-full w-2 cursor-col-resize" onMouseDown={(event) => startMovementColumnResize(event, "descrizioneArticolo")} />
+                      </th>
+                      <th className="relative px-3 py-2 pr-5 whitespace-nowrap overflow-hidden">
+                        <button type="button" className="flex max-w-full items-center gap-2 truncate" onClick={() => handleMovementsSort("descrizioneMovimento")}>
+                          Descrizione Movimento
+                          <i className={`fa-solid ${movementsSortIndicator("descrizioneMovimento")} text-[10px]`} aria-hidden="true" />
+                        </button>
+                        <span className="absolute right-0 top-0 h-full w-2 cursor-col-resize" onMouseDown={(event) => startMovementColumnResize(event, "descrizioneMovimento")} />
+                      </th>
+                      <th className="relative px-3 py-2 pr-5 whitespace-nowrap overflow-hidden">
+                        <button type="button" className="flex max-w-full items-center gap-2 truncate" onClick={() => handleMovementsSort("unitaMisura")}>
+                          U di M
+                          <i className={`fa-solid ${movementsSortIndicator("unitaMisura")} text-[10px]`} aria-hidden="true" />
+                        </button>
+                        <span className="absolute right-0 top-0 h-full w-2 cursor-col-resize" onMouseDown={(event) => startMovementColumnResize(event, "unitaMisura")} />
+                      </th>
+                      <th className="relative px-3 py-2 pr-5 whitespace-nowrap overflow-hidden">
+                        <button type="button" className="flex max-w-full items-center gap-2 truncate" onClick={() => handleMovementsSort("quantita")}>
+                          QT
+                          <i className={`fa-solid ${movementsSortIndicator("quantita")} text-[10px]`} aria-hidden="true" />
+                        </button>
+                        <span className="absolute right-0 top-0 h-full w-2 cursor-col-resize" onMouseDown={(event) => startMovementColumnResize(event, "quantita")} />
+                      </th>
+                      <th className="relative px-3 py-2 pr-5 whitespace-nowrap overflow-hidden">
+                        <button type="button" className="flex max-w-full items-center gap-2 truncate" onClick={() => handleMovementsSort("costoAcquisto")}>
+                          Costo
+                          <i className={`fa-solid ${movementsSortIndicator("costoAcquisto")} text-[10px]`} aria-hidden="true" />
+                        </button>
+                        <span className="absolute right-0 top-0 h-full w-2 cursor-col-resize" onMouseDown={(event) => startMovementColumnResize(event, "costoAcquisto")} />
+                      </th>
+                      <th className="relative px-3 py-2 pr-5 whitespace-nowrap overflow-hidden">
+                        <button type="button" className="flex max-w-full items-center gap-2 truncate" onClick={() => handleMovementsSort("depositoIniziale")}>
+                          Dep_Iniziale
+                          <i className={`fa-solid ${movementsSortIndicator("depositoIniziale")} text-[10px]`} aria-hidden="true" />
+                        </button>
+                        <span className="absolute right-0 top-0 h-full w-2 cursor-col-resize" onMouseDown={(event) => startMovementColumnResize(event, "depositoIniziale")} />
+                      </th>
+                      <th className="relative px-3 py-2 pr-5 whitespace-nowrap overflow-hidden">
+                        <button type="button" className="flex max-w-full items-center gap-2 truncate" onClick={() => handleMovementsSort("depositoFinale")}>
+                          Dep_Finale
+                          <i className={`fa-solid ${movementsSortIndicator("depositoFinale")} text-[10px]`} aria-hidden="true" />
+                        </button>
+                        <span className="absolute right-0 top-0 h-full w-2 cursor-col-resize" onMouseDown={(event) => startMovementColumnResize(event, "depositoFinale")} />
+                      </th>
+                      <th className="relative px-3 py-2 pr-5 whitespace-nowrap overflow-hidden">
+                        <button type="button" className="flex max-w-full items-center gap-2 truncate" onClick={() => handleMovementsSort("nominativo")}>
+                          Nominativo
+                          <i className={`fa-solid ${movementsSortIndicator("nominativo")} text-[10px]`} aria-hidden="true" />
+                        </button>
+                        <span className="absolute right-0 top-0 h-full w-2 cursor-col-resize" onMouseDown={(event) => startMovementColumnResize(event, "nominativo")} />
+                      </th>
+                      <th className="relative px-3 py-2 pr-5 whitespace-nowrap overflow-hidden">
+                        <button type="button" className="flex w-full items-center justify-between gap-2" onClick={() => handleMovementsSort("varFisica")}>
+                          <span className="truncate">Var.Fisica</span>
+                          <i className={`fa-solid ${movementsSortIndicator("varFisica")} shrink-0 text-[10px]`} aria-hidden="true" />
+                        </button>
+                        <span className="absolute right-0 top-0 h-full w-2 cursor-col-resize" onMouseDown={(event) => startMovementColumnResize(event, "varFisica")} />
+                      </th>
+                      <th className="relative px-3 py-2 pr-5 whitespace-nowrap overflow-hidden">
+                        <button type="button" className="flex w-full items-center justify-between gap-2" onClick={() => handleMovementsSort("varFiscale")}>
+                          <span className="truncate">Var.Fiscale</span>
+                          <i className={`fa-solid ${movementsSortIndicator("varFiscale")} shrink-0 text-[10px]`} aria-hidden="true" />
+                        </button>
+                        <span className="absolute right-0 top-0 h-full w-2 cursor-col-resize" onMouseDown={(event) => startMovementColumnResize(event, "varFiscale")} />
+                      </th>
+                      <th className="relative px-3 py-2 pr-5 whitespace-nowrap overflow-hidden">
+                        <button type="button" className="flex max-w-full items-center gap-2 truncate" onClick={() => handleMovementsSort("prezzoVendita")}>
+                          Prezzo di Vendita
+                          <i className={`fa-solid ${movementsSortIndicator("prezzoVendita")} text-[10px]`} aria-hidden="true" />
+                        </button>
+                        <span className="absolute right-0 top-0 h-full w-2 cursor-col-resize" onMouseDown={(event) => startMovementColumnResize(event, "prezzoVendita")} />
+                      </th>
+                      <th className="relative px-3 py-2 pr-5 whitespace-nowrap overflow-hidden">
+                        <button type="button" className="flex max-w-full items-center gap-2 truncate" onClick={() => handleMovementsSort("partNumber")}>
+                          Part Number
+                          <i className={`fa-solid ${movementsSortIndicator("partNumber")} text-[10px]`} aria-hidden="true" />
+                        </button>
+                        <span className="absolute right-0 top-0 h-full w-2 cursor-col-resize" onMouseDown={(event) => startMovementColumnResize(event, "partNumber")} />
+                      </th>
+                      <th className="relative px-3 py-2 pr-5 whitespace-nowrap overflow-hidden">
+                        <button type="button" className="flex max-w-full items-center gap-2 truncate" onClick={() => handleMovementsSort("note")}>
+                          Note
+                          <i className={`fa-solid ${movementsSortIndicator("note")} text-[10px]`} aria-hidden="true" />
+                        </button>
+                        <span className="absolute right-0 top-0 h-full w-2 cursor-col-resize" onMouseDown={(event) => startMovementColumnResize(event, "note")} />
+                      </th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {movementsRows.map((row) => (
+                      <tr key={row.codMovimento} className="border-t border-[var(--border)]">
+                        <td className="px-3 py-2 whitespace-nowrap overflow-hidden">
+                          <span className="block truncate" title={formatDate(row.data)}>{formatDate(row.data)}</span>
+                        </td>
+                        <td className="px-3 py-2 whitespace-nowrap overflow-hidden">
+                          <span className="block truncate" title={String(row.codDdt || 0)}>{row.codDdt || 0}</span>
+                        </td>
+                        <td className="px-3 py-2 whitespace-nowrap overflow-hidden font-semibold text-sky-400">
+                          <span className="block truncate" title={row.codiceArticolo || ""}>{row.codiceArticolo || "-"}</span>
+                        </td>
+                        <td className="px-3 py-2 whitespace-nowrap overflow-hidden">
+                          <span className="block truncate" title={row.descrizioneArticolo || ""}>
+                            {row.descrizioneArticolo || "-"}
+                          </span>
+                        </td>
+                        <td className="px-3 py-2 whitespace-nowrap overflow-hidden">
+                          <span className="block truncate" title={row.descrizioneMovimento || ""}>
+                            {row.descrizioneMovimento || "-"}
+                          </span>
+                        </td>
+                        <td className="px-3 py-2 whitespace-nowrap overflow-hidden">
+                          <span className="block truncate" title={row.unitaMisura || ""}>{row.unitaMisura || "-"}</span>
+                        </td>
+                        <td className="px-3 py-2 whitespace-nowrap overflow-hidden">
+                          <span className="block truncate" title={formatNumber(row.quantita)}>{formatNumber(row.quantita)}</span>
+                        </td>
+                        <td className="px-3 py-2 whitespace-nowrap overflow-hidden">
+                          <span className="block truncate" title={formatCurrency(row.costoAcquisto)}>{formatCurrency(row.costoAcquisto)}</span>
+                        </td>
+                        <td className="px-3 py-2 whitespace-nowrap overflow-hidden">
+                          <span className="block truncate" title={row.depositoIniziale || ""}>
+                            {row.depositoIniziale || "-"}
+                          </span>
+                        </td>
+                        <td className="px-3 py-2 whitespace-nowrap overflow-hidden">
+                          <span className="block truncate" title={row.depositoFinale || ""}>
+                            {row.depositoFinale || "-"}
+                          </span>
+                        </td>
+                        <td className="px-3 py-2 whitespace-nowrap overflow-hidden">
+                          <span className="block truncate" title={row.nominativo || ""}>
+                            {row.nominativo || "-"}
+                          </span>
+                        </td>
+                        <td className="px-3 py-2 whitespace-nowrap overflow-hidden">
+                          <span className="block truncate" title={formatNumber(row.varFisica)}>{formatNumber(row.varFisica)}</span>
+                        </td>
+                        <td className="px-3 py-2 whitespace-nowrap overflow-hidden">
+                          <span className="block truncate" title={formatNumber(row.varFiscale)}>{formatNumber(row.varFiscale)}</span>
+                        </td>
+                        <td className="px-3 py-2 whitespace-nowrap overflow-hidden">
+                          <span className="block truncate" title={formatCurrency(row.prezzoVendita)}>{formatCurrency(row.prezzoVendita)}</span>
+                        </td>
+                        <td className="px-3 py-2 whitespace-nowrap overflow-hidden">
+                          <span className="block truncate" title={row.partNumber || ""}>
+                            {row.partNumber || "-"}
+                          </span>
+                        </td>
+                        <td className="px-3 py-2 whitespace-nowrap overflow-hidden">
+                          <span className="block truncate" title={row.note || ""}>
+                            {row.note || "-"}
+                          </span>
+                        </td>
+                      </tr>
+                    ))}
+                    {!movementsLoading && movementsRows.length === 0 ? (
+                      <tr>
+                        <td colSpan={16} className="px-3 py-8 text-center text-xs text-[var(--muted)]">
+                          Nessun movimento trovato.
+                        </td>
+                      </tr>
+                    ) : null}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          </div>
+        </div>
+      ) : null}
 
       {causaliOpen ? (
         <div

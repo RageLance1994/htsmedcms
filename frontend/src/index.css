@@ -119,3 +119,9 @@ html.dark {
   border-radius: 9999px;
   border: 2px solid var(--surface-soft);
 }
+
+/* Alternating column tint for dense warehouse tables */
+.warehouse-column-stripes th:nth-child(even),
+.warehouse-column-stripes td:nth-child(even) {
+  background-color: rgba(148, 163, 184, 0.05);
+}
