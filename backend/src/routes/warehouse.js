@@ -1,6 +1,7 @@
 import express from "express";
 import mongoose from "mongoose";
 import crypto from "crypto";
+import os from "os";
 
 const router = express.Router();
 
@@ -37,16 +38,61 @@ const normalizeOrigin = (value) => {
   return raw.replace(/\/+$/, "");
 };
 
+const isLoopbackHost = (host) => {
+  const value = String(host || "").trim().toLowerCase();
+  return value === "localhost" || value === "127.0.0.1" || value === "::1" || value === "[::1]";
+};
+
+const isPrivateIpv4 = (ip) => {
+  const parts = String(ip || "")
+    .split(".")
+    .map((part) => Number(part));
+  if (parts.length !== 4 || parts.some((part) => !Number.isInteger(part) || part < 0 || part > 255)) return false;
+  if (parts[0] === 10) return true;
+  if (parts[0] === 192 && parts[1] === 168) return true;
+  if (parts[0] === 172 && parts[1] >= 16 && parts[1] <= 31) return true;
+  return false;
+};
+
+const getPreferredLanIpv4 = () => {
+  const interfaces = os.networkInterfaces();
+  for (const addresses of Object.values(interfaces)) {
+    if (!Array.isArray(addresses)) continue;
+    for (const addr of addresses) {
+      if (!addr || addr.family !== "IPv4" || addr.internal) continue;
+      if (isPrivateIpv4(addr.address)) {
+        return addr.address;
+      }
+    }
+  }
+  return "";
+};
+
+const withLanHostWhenLoopback = (originLike) => {
+  const normalized = normalizeOrigin(originLike);
+  if (!normalized) return "";
+  try {
+    const url = new URL(normalized);
+    if (!isLoopbackHost(url.hostname)) return normalized;
+    const lanIp = getPreferredLanIpv4();
+    if (!lanIp) return normalized;
+    url.hostname = lanIp;
+    return normalizeOrigin(url.toString());
+  } catch {
+    return normalized;
+  }
+};
+
 const getScanBaseUrl = (req) => {
-  const envBase = normalizeOrigin(process.env.SCAN_MOBILE_BASE_URL);
+  const envBase = withLanHostWhenLoopback(process.env.SCAN_MOBILE_BASE_URL);
   if (envBase) return envBase;
-  const originHeader = normalizeOrigin(req.headers.origin);
+  const originHeader = withLanHostWhenLoopback(req.headers.origin);
   if (originHeader) return originHeader;
   const forwardedProto = String(req.headers["x-forwarded-proto"] || "").split(",")[0].trim();
   const proto = forwardedProto || req.protocol || "http";
   const host = String(req.headers["x-forwarded-host"] || req.headers.host || "").split(",")[0].trim();
   if (!host) return "";
-  return `${proto}://${host}`;
+  return withLanHostWhenLoopback(`${proto}://${host}`);
 };
 
 const readResponseOutputText = (payload) => {

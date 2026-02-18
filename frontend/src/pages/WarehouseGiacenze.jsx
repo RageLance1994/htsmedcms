@@ -240,7 +240,7 @@ export default function WarehouseGiacenze() {
   const [caricoSaving, setCaricoSaving] = useState(false);
   const [caricoError, setCaricoError] = useState("");
   const [newArticleOpen, setNewArticleOpen] = useState(false);
-  const [newArticleForm, setNewArticleForm] = useState(getInitialNewArticleForm);
+  const newArticleDraftRef = useRef(getInitialNewArticleForm());
   const [newArticleSaving, setNewArticleSaving] = useState(false);
   const [newArticleError, setNewArticleError] = useState("");
   const [expandedRows, setExpandedRows] = useState(() => new Set());
@@ -514,7 +514,7 @@ export default function WarehouseGiacenze() {
 
   useEffect(() => {
     if (!newArticleOpen) return;
-    setNewArticleForm(getInitialNewArticleForm());
+    newArticleDraftRef.current = getInitialNewArticleForm();
     setNewArticleError("");
   }, [newArticleOpen]);
 
@@ -860,14 +860,15 @@ export default function WarehouseGiacenze() {
   };
 
   const updateNewArticleField = (field, value) => {
-    setNewArticleForm((prev) => ({ ...prev, [field]: value }));
+    newArticleDraftRef.current = { ...newArticleDraftRef.current, [field]: value };
   };
 
   const saveNewArticle = async () => {
-    const codice = String(newArticleForm.codiceArticolo || "").trim();
-    const descrizione = String(newArticleForm.descrizione || "").trim();
-    const tipo = String(newArticleForm.tipo || "").trim();
-    const centroDiCosto = String(newArticleForm.centroDiCosto || "").trim();
+    const draft = newArticleDraftRef.current || getInitialNewArticleForm();
+    const codice = String(draft.codiceArticolo || "").trim();
+    const descrizione = String(draft.descrizione || "").trim();
+    const tipo = String(draft.tipo || "").trim();
+    const centroDiCosto = String(draft.centroDiCosto || "").trim();
     if (!codice || !descrizione || !tipo || !centroDiCosto) {
       setNewArticleError("Compila i campi obbligatori: descrizione, codice articolo, tipo, centro di costo.");
       return;
@@ -880,7 +881,7 @@ export default function WarehouseGiacenze() {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          ...newArticleForm,
+          ...draft,
           codiceArticolo: codice,
           descrizione
         })
@@ -2732,7 +2733,7 @@ export default function WarehouseGiacenze() {
                 <span className="text-xs uppercase tracking-[0.2em] text-[var(--muted)]">Descrizione</span>
                 <input
                   type="text"
-                  value={newArticleForm.descrizione}
+                  defaultValue=""
                   onChange={(event) => updateNewArticleField("descrizione", event.target.value)}
                   className="mt-2 w-full rounded-md border border-[var(--border)] bg-[var(--surface)] px-3 py-2 text-sm"
                 />
@@ -2742,7 +2743,7 @@ export default function WarehouseGiacenze() {
                 <span className="text-xs uppercase tracking-[0.2em] text-[var(--muted)]">Codice articolo</span>
                 <input
                   type="text"
-                  value={newArticleForm.codiceArticolo}
+                  defaultValue=""
                   onChange={(event) => updateNewArticleField("codiceArticolo", event.target.value)}
                   className="mt-2 w-full rounded-md border border-[var(--border)] bg-[var(--surface)] px-3 py-2 text-sm"
                 />
@@ -2752,7 +2753,7 @@ export default function WarehouseGiacenze() {
                 <span className="text-xs uppercase tracking-[0.2em] text-[var(--muted)]">Marca</span>
                 <input
                   type="text"
-                  value={newArticleForm.marca}
+                  defaultValue=""
                   onChange={(event) => updateNewArticleField("marca", event.target.value)}
                   className="mt-2 w-full rounded-md border border-[var(--border)] bg-[var(--surface)] px-3 py-2 text-sm"
                 />
@@ -2761,7 +2762,7 @@ export default function WarehouseGiacenze() {
               <label className="text-sm">
                 <span className="text-xs uppercase tracking-[0.2em] text-[var(--muted)]">Tipo</span>
                 <select
-                  value={newArticleForm.tipo}
+                  defaultValue={NEW_ARTICLE_TYPE_OPTIONS[0]}
                   onChange={(event) => updateNewArticleField("tipo", event.target.value)}
                   className="mt-2 w-full rounded-md border border-[var(--border)] bg-[var(--surface)] px-3 py-2 text-sm"
                 >
@@ -2776,7 +2777,7 @@ export default function WarehouseGiacenze() {
               <label className="text-sm">
                 <span className="text-xs uppercase tracking-[0.2em] text-[var(--muted)]">Unita di misura</span>
                 <select
-                  value={newArticleForm.unitaMisura}
+                  defaultValue={NEW_ARTICLE_UNIT_OPTIONS[0]}
                   onChange={(event) => updateNewArticleField("unitaMisura", event.target.value)}
                   className="mt-2 w-full rounded-md border border-[var(--border)] bg-[var(--surface)] px-3 py-2 text-sm"
                 >
@@ -2791,7 +2792,7 @@ export default function WarehouseGiacenze() {
               <label className="text-sm">
                 <span className="text-xs uppercase tracking-[0.2em] text-[var(--muted)]">Centro di costo</span>
                 <select
-                  value={newArticleForm.centroDiCosto}
+                  defaultValue={NEW_ARTICLE_COST_CENTER_OPTIONS[0]}
                   onChange={(event) => updateNewArticleField("centroDiCosto", event.target.value)}
                   className="mt-2 w-full rounded-md border border-[var(--border)] bg-[var(--surface)] px-3 py-2 text-sm"
                 >
@@ -2807,7 +2808,7 @@ export default function WarehouseGiacenze() {
                 <label className="flex items-center gap-2">
                   <input
                     type="checkbox"
-                    checked={newArticleForm.valorizza}
+                    defaultChecked={false}
                     onChange={(event) => updateNewArticleField("valorizza", event.target.checked)}
                     className="h-4 w-4"
                   />
@@ -2816,7 +2817,7 @@ export default function WarehouseGiacenze() {
                 <label className="flex items-center gap-2">
                   <input
                     type="checkbox"
-                    checked={newArticleForm.ammetteSeriale}
+                    defaultChecked={false}
                     onChange={(event) => updateNewArticleField("ammetteSeriale", event.target.checked)}
                     className="h-4 w-4"
                   />
@@ -2828,7 +2829,7 @@ export default function WarehouseGiacenze() {
                 <span className="text-xs uppercase tracking-[0.2em] text-[var(--muted)]">Prezzo di vendita</span>
                 <input
                   type="number"
-                  value={newArticleForm.prezzoVendita}
+                  defaultValue=""
                   onChange={(event) => updateNewArticleField("prezzoVendita", event.target.value)}
                   className="mt-2 w-full rounded-md border border-[var(--border)] bg-[var(--surface)] px-3 py-2 text-sm"
                 />
@@ -2838,7 +2839,7 @@ export default function WarehouseGiacenze() {
                 <span className="text-xs uppercase tracking-[0.2em] text-[var(--muted)]">Costo di acquisto</span>
                 <input
                   type="number"
-                  value={newArticleForm.costoAcquisto}
+                  defaultValue=""
                   onChange={(event) => updateNewArticleField("costoAcquisto", event.target.value)}
                   className="mt-2 w-full rounded-md border border-[var(--border)] bg-[var(--surface)] px-3 py-2 text-sm"
                 />
@@ -2848,7 +2849,7 @@ export default function WarehouseGiacenze() {
                 <span className="text-xs uppercase tracking-[0.2em] text-[var(--muted)]">Part number</span>
                 <input
                   type="text"
-                  value={newArticleForm.partNumber}
+                  defaultValue=""
                   onChange={(event) => updateNewArticleField("partNumber", event.target.value)}
                   className="mt-2 w-full rounded-md border border-[var(--border)] bg-[var(--surface)] px-3 py-2 text-sm"
                 />
@@ -2858,7 +2859,7 @@ export default function WarehouseGiacenze() {
                 <span className="text-xs uppercase tracking-[0.2em] text-[var(--muted)]">Vendor code</span>
                 <input
                   type="text"
-                  value={newArticleForm.vendorCode}
+                  defaultValue=""
                   onChange={(event) => updateNewArticleField("vendorCode", event.target.value)}
                   className="mt-2 w-full rounded-md border border-[var(--border)] bg-[var(--surface)] px-3 py-2 text-sm"
                 />
@@ -2869,7 +2870,7 @@ export default function WarehouseGiacenze() {
                 <div className="mt-2 flex items-center gap-2 text-sm">
                   <input
                     type="checkbox"
-                    checked={newArticleForm.alertGiacenza}
+                    defaultChecked={false}
                     onChange={(event) => updateNewArticleField("alertGiacenza", event.target.checked)}
                     className="h-4 w-4"
                   />
@@ -2879,7 +2880,7 @@ export default function WarehouseGiacenze() {
                   <span className="text-xs uppercase tracking-[0.2em] text-[var(--muted)]">Soglia alert</span>
                   <input
                     type="number"
-                    value={newArticleForm.giacenzaMinima}
+                    defaultValue=""
                     onChange={(event) => updateNewArticleField("giacenzaMinima", event.target.value)}
                     className="mt-2 w-full rounded-md border border-[var(--border)] bg-[var(--surface)] px-3 py-2 text-sm"
                   />
@@ -2891,7 +2892,7 @@ export default function WarehouseGiacenze() {
                 <label className="mt-2 flex items-center gap-2 text-sm">
                   <input
                     type="checkbox"
-                    checked={newArticleForm.obsoleto}
+                    defaultChecked={false}
                     onChange={(event) => updateNewArticleField("obsoleto", event.target.checked)}
                     className="h-4 w-4"
                   />
