@@ -1,0 +1,802 @@
+﻿import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useLocation } from "react-router-dom";
+import AppLayout from "../components/AppLayout.jsx";
+import useDebouncedCallback from "../hooks/useDebouncedCallback.js";
+
+const API_BASE = import.meta.env.VITE_API_URL || "http://localhost:3000";
+
+const clamp = (v, min, max) => Math.min(Math.max(v, min), max);
+const newUid = () => `b_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 8)}`;
+
+const nowLocalInput = () => {
+  const d = new Date();
+  d.setSeconds(0, 0);
+  const local = new Date(d.getTime() - d.getTimezoneOffset() * 60000);
+  return local.toISOString().slice(0, 16);
+};
+
+const formatDateTime = (value) => {
+  if (!value) return "-";
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return "-";
+  return date.toLocaleString("it-IT");
+};
+
+const makeBlock = (kind, n) => {
+  const base = { x: 80 + n * 12, y: 80 + n * 12, w: 170, h: 62, rotation: 0, shape: "rect" };
+  if (kind === "prop") return { ...base, uid: newUid(), id: `P${n}`, label: `Prop ${n}`, kind: "prop", color: "#38bdf8" };
+  if (kind === "shape") return { ...base, uid: newUid(), id: `F${n}`, label: `Forma ${n}`, kind: "shape", color: "#f59e0b" };
+  return { ...base, uid: newUid(), id: `S${n}`, label: `Scaffale ${n}`, kind: "shelf", color: "#4ade80" };
+};
+
+const getNextBlockNumber = (kind, blocks) => {
+  const prefix = kind === "prop" ? "P" : kind === "shape" ? "F" : "S";
+  const maxNum = (Array.isArray(blocks) ? blocks : []).reduce((acc, block) => {
+    const id = String(block?.id || "");
+    if (!id.startsWith(prefix)) return acc;
+    const parsed = parseInt(id.slice(1), 10);
+    if (!Number.isFinite(parsed)) return acc;
+    return Math.max(acc, parsed);
+  }, 0);
+  return maxNum + 1;
+};
+
+const DEFAULT_LAYOUT = {
+  width: 1600,
+  height: 980,
+  blocks: [makeBlock("shelf", 1), makeBlock("shelf", 2), makeBlock("shelf", 3)]
+};
+
+const normalizeLayout = (layout) => {
+  const blocks = Array.isArray(layout?.blocks) ? layout.blocks : [];
+  const usedIds = new Set();
+  const toUniqueId = (rawId, fallbackPrefix, index) => {
+    const baseRaw = String(rawId || "").trim() || `${fallbackPrefix}${index + 1}`;
+    const cleaned = baseRaw.replace(/\s+/g, "_");
+    if (!usedIds.has(cleaned)) {
+      usedIds.add(cleaned);
+      return cleaned;
+    }
+    let suffix = 2;
+    let next = `${cleaned}_${suffix}`;
+    while (usedIds.has(next)) {
+      suffix += 1;
+      next = `${cleaned}_${suffix}`;
+    }
+    usedIds.add(next);
+    return next;
+  };
+  return {
+    width: Math.max(600, Number(layout?.width || DEFAULT_LAYOUT.width)),
+    height: Math.max(400, Number(layout?.height || DEFAULT_LAYOUT.height)),
+    blocks: blocks.map((b, i) => ({
+      uid: newUid(),
+      id: toUniqueId(b?.id, "E", i),
+      label: String(b?.label || b?.id || `Elemento ${i + 1}`),
+      kind: ["shelf", "prop", "shape"].includes(String(b?.kind || "").toLowerCase()) ? String(b.kind).toLowerCase() : "shelf",
+      shape: ["rect", "circle"].includes(String(b?.shape || "").toLowerCase()) ? String(b.shape).toLowerCase() : "rect",
+      x: Number(b?.x || 0),
+      y: Number(b?.y || 0),
+      w: Math.max(24, Number(b?.w || 120)),
+      h: Math.max(24, Number(b?.h || 48)),
+      rotation: Number(b?.rotation || 0),
+      color: String(b?.color || "#4ade80")
+    }))
+  };
+};
+
+export default function WarehouseMaps() {
+  const location = useLocation();
+  const params = useMemo(() => new URLSearchParams(location.search), [location.search]);
+  const action = String(params.get("action") || "").trim().toLowerCase();
+  const forcedMode = action === "gestisci-allocazione" ? "manage" : action === "visualizza-allocazione" ? "view" : "editor";
+
+  const [search, setSearch] = useState("");
+  const [debouncedSearch, setDebouncedSearch] = useState("");
+  const [page, setPage] = useState(1);
+  const [limit, setLimit] = useState(50);
+  const [total, setTotal] = useState(0);
+  const [rows, setRows] = useState([]);
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState("");
+  const [info, setInfo] = useState("");
+
+  const [createOpen, setCreateOpen] = useState(false);
+  const [creating, setCreating] = useState(false);
+  const [createDraft, setCreateDraft] = useState({ name: "", address: "", lastUpdatedAt: nowLocalInput(), notes: "" });
+
+  const [wizardOpen, setWizardOpen] = useState(false);
+  const [wizardMode, setWizardMode] = useState(forcedMode);
+  const [saving, setSaving] = useState(false);
+
+  const [activeWarehouseId, setActiveWarehouseId] = useState("");
+  const [activeWarehouseName, setActiveWarehouseName] = useState("");
+  const [activeWarehouseAddress, setActiveWarehouseAddress] = useState("");
+  const [activeWarehouseNotes, setActiveWarehouseNotes] = useState("");
+  const [activeWarehouseLastUpdatedAt, setActiveWarehouseLastUpdatedAt] = useState(nowLocalInput());
+
+  const [layout, setLayout] = useState(DEFAULT_LAYOUT);
+  const [selectedBlockId, setSelectedBlockId] = useState("");
+  const [viewport, setViewport] = useState({ zoom: 1, x: 24, y: 24 });
+
+  const [allocation, setAllocation] = useState({
+    movementCod: Number(params.get("movementCod") || 0) || 0,
+    codiceArticolo: String(params.get("codiceArticolo") || "").trim(),
+    seriale: String(params.get("seriale") || "").trim(),
+    scaffale: String(params.get("scaffale") || "").trim(),
+    riga: "",
+    colonna: "",
+    note: "",
+    loading: false,
+    saving: false
+  });
+
+  const dragRef = useRef(null);
+  const resizeRef = useRef(null);
+  const panRef = useRef(null);
+  const canvasWrapRef = useRef(null);
+
+  const [debouncedSearchUpdate, cancelDebouncedSearchUpdate] = useDebouncedCallback((next) => {
+    setPage(1);
+    setDebouncedSearch(String(next || "").trim());
+  }, 168);
+
+  const totalPages = useMemo(() => Math.max(Math.ceil(Number(total || 0) / Math.max(1, Number(limit || 1))), 1), [total, limit]);
+  const fromIndex = useMemo(() => (total <= 0 ? 0 : (page - 1) * limit + 1), [page, limit, total]);
+  const toIndex = useMemo(() => (total <= 0 ? 0 : Math.min(page * limit, total)), [page, limit, total]);
+  const selectedBlock = useMemo(() => layout.blocks.find((b) => b.uid === selectedBlockId) || null, [layout.blocks, selectedBlockId]);
+  const shelfBlocks = useMemo(() => layout.blocks.filter((b) => b.kind === "shelf"), [layout.blocks]);
+  const isAllocationMode = wizardMode === "view" || wizardMode === "manage";
+
+  const allocationBlockId = useMemo(() => {
+    const target = String(allocation.scaffale || "").trim().toLowerCase();
+    if (!target) return "";
+    const hit = layout.blocks.find((b) => b.kind === "shelf" && (String(b.label || "").trim().toLowerCase() === target || String(b.id || "").trim().toLowerCase() === target));
+    return hit?.id || "";
+  }, [allocation.scaffale, layout.blocks]);
+
+  const loadMaps = useCallback(async () => {
+    setLoading(true);
+    setError("");
+    try {
+      const q = new URLSearchParams({ page: String(page), limit: String(limit), search: debouncedSearch });
+      const res = await fetch(`${API_BASE}/api/warehouse/maps?${q.toString()}`);
+      if (!res.ok) throw new Error("Errore caricamento magazzini");
+      const payload = await res.json();
+      setRows(Array.isArray(payload?.data) ? payload.data : []);
+      setTotal(Number(payload?.total || 0));
+    } catch (err) {
+      setRows([]);
+      setTotal(0);
+      setError(err.message || "Errore caricamento magazzini");
+    } finally {
+      setLoading(false);
+    }
+  }, [page, limit, debouncedSearch]);
+
+  const loadAllocationByMovement = useCallback(async (movementCod) => {
+    const cod = Number(movementCod || 0);
+    if (!Number.isFinite(cod) || cod <= 0) return;
+    setAllocation((prev) => ({ ...prev, loading: true }));
+    try {
+      const res = await fetch(`${API_BASE}/api/warehouse/movimenti/${encodeURIComponent(String(cod))}/allocazione`);
+      if (!res.ok) throw new Error("Errore allocazione");
+      const payload = await res.json();
+      const row = payload?.allocazione || {};
+      setAllocation((prev) => ({
+        ...prev,
+        movementCod: cod,
+        codiceArticolo: String(row.codiceArticolo || prev.codiceArticolo || ""),
+        seriale: String(row.seriale || prev.seriale || ""),
+        scaffale: String(row.scaffale || prev.scaffale || ""),
+        riga: String(row.riga || ""),
+        colonna: String(row.colonna || ""),
+        note: String(row.note || ""),
+        loading: false
+      }));
+    } catch {
+      setAllocation((prev) => ({ ...prev, loading: false }));
+    }
+  }, []);
+
+  const openWizardForWarehouse = useCallback(async (id, modeOverride = null) => {
+    const target = String(id || "").trim();
+    if (!target) return;
+    setError("");
+    setInfo("");
+    try {
+      const res = await fetch(`${API_BASE}/api/warehouse/maps/${encodeURIComponent(target)}`);
+      if (!res.ok) throw new Error("Errore caricamento magazzino");
+      const payload = await res.json();
+      const row = payload?.warehouse;
+      if (!row) throw new Error("Magazzino non valido");
+      const normalized = normalizeLayout(row.layout || DEFAULT_LAYOUT);
+      setActiveWarehouseId(String(row.id || target));
+      setActiveWarehouseName(String(row.name || ""));
+      setActiveWarehouseAddress(String(row.address || ""));
+      setActiveWarehouseNotes(String(row.notes || ""));
+      setActiveWarehouseLastUpdatedAt(row?.lastUpdatedAt ? new Date(row.lastUpdatedAt).toISOString().slice(0, 16) : nowLocalInput());
+      setLayout(normalized);
+      setSelectedBlockId(normalized.blocks[0]?.uid || "");
+      setViewport({ zoom: 1, x: 24, y: 24 });
+      setWizardMode(modeOverride || forcedMode);
+      setWizardOpen(true);
+    } catch (err) {
+      setError(err.message || "Errore apertura wizard");
+    }
+  }, [forcedMode]);
+
+  const createWarehouse = useCallback(async () => {
+    const name = String(createDraft.name || "").trim();
+    if (!name || creating) return;
+    setCreating(true);
+    setError("");
+    try {
+      const res = await fetch(`${API_BASE}/api/warehouse/maps`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          name,
+          address: String(createDraft.address || "").trim(),
+          notes: String(createDraft.notes || "").trim(),
+          lastUpdatedAt: createDraft.lastUpdatedAt ? new Date(createDraft.lastUpdatedAt).toISOString() : new Date().toISOString(),
+          layout: DEFAULT_LAYOUT
+        })
+      });
+      if (!res.ok) {
+        const payload = await res.json().catch(() => ({}));
+        throw new Error(payload?.errore || "Errore creazione magazzino");
+      }
+      const payload = await res.json();
+      const createdId = payload?.warehouse?.id;
+      setCreateOpen(false);
+      setCreateDraft({ name: "", address: "", lastUpdatedAt: nowLocalInput(), notes: "" });
+      await loadMaps();
+      if (createdId) await openWizardForWarehouse(createdId, forcedMode);
+    } catch (err) {
+      setError(err.message || "Errore creazione magazzino");
+    } finally {
+      setCreating(false);
+    }
+  }, [createDraft, creating, forcedMode, loadMaps, openWizardForWarehouse]);
+
+  const closeWizard = useCallback(() => {
+    setWizardOpen(false);
+    setWizardMode(forcedMode);
+    setSaving(false);
+  }, [forcedMode]);
+
+  const saveWarehouseLayout = useCallback(async () => {
+    if (!activeWarehouseId || isAllocationMode || saving) return;
+    setSaving(true);
+    setError("");
+    setInfo("");
+    try {
+      const res = await fetch(`${API_BASE}/api/warehouse/maps/${encodeURIComponent(activeWarehouseId)}`, {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          name: activeWarehouseName,
+          address: activeWarehouseAddress,
+          notes: activeWarehouseNotes,
+          lastUpdatedAt: activeWarehouseLastUpdatedAt ? new Date(activeWarehouseLastUpdatedAt).toISOString() : new Date().toISOString(),
+          layout
+        })
+      });
+      if (!res.ok) throw new Error("Errore salvataggio piantina");
+      setInfo("Piantina salvata");
+      await loadMaps();
+    } catch (err) {
+      setError(err.message || "Errore salvataggio piantina");
+    } finally {
+      setSaving(false);
+    }
+  }, [activeWarehouseAddress, activeWarehouseId, activeWarehouseLastUpdatedAt, activeWarehouseName, activeWarehouseNotes, isAllocationMode, layout, loadMaps, saving]);
+
+  const saveAllocation = useCallback(async () => {
+    if (wizardMode !== "manage" || !allocation.movementCod || allocation.saving) return;
+    setAllocation((prev) => ({ ...prev, saving: true }));
+    setError("");
+    setInfo("");
+    try {
+      const res = await fetch(`${API_BASE}/api/warehouse/movimenti/${encodeURIComponent(String(allocation.movementCod))}/allocazione`, {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          codiceArticolo: allocation.codiceArticolo,
+          seriale: allocation.seriale,
+          scaffale: allocation.scaffale,
+          riga: allocation.riga,
+          colonna: allocation.colonna,
+          note: allocation.note
+        })
+      });
+      if (!res.ok) throw new Error("Errore salvataggio allocazione");
+      setInfo("Allocazione aggiornata");
+    } catch (err) {
+      setError(err.message || "Errore salvataggio allocazione");
+    } finally {
+      setAllocation((prev) => ({ ...prev, saving: false }));
+    }
+  }, [allocation, wizardMode]);
+
+  const addElement = (kind) => {
+    const nextNumber = getNextBlockNumber(kind, layout.blocks);
+    const block = makeBlock(kind, nextNumber);
+    const wrap = canvasWrapRef.current;
+    if (wrap) {
+      const cx = (wrap.clientWidth / 2 - viewport.x) / viewport.zoom;
+      const cy = (wrap.clientHeight / 2 - viewport.y) / viewport.zoom;
+      block.x = Math.round(cx - block.w / 2);
+      block.y = Math.round(cy - block.h / 2);
+    }
+    setLayout((prev) => ({ ...prev, blocks: [...prev.blocks, block] }));
+    setSelectedBlockId(block.uid);
+  };
+
+  const updateSelectedBlock = (patch) => {
+    if (!selectedBlock) return;
+    setLayout((prev) => ({ ...prev, blocks: prev.blocks.map((b) => (b.uid === selectedBlock.uid ? { ...b, ...patch } : b)) }));
+  };
+
+  const beginResize = (event, block, anchor) => {
+    event.preventDefault();
+    event.stopPropagation();
+    resizeRef.current = {
+      pointerId: event.pointerId,
+      id: block.uid,
+      startX: event.clientX,
+      startY: event.clientY,
+      baseX: block.x,
+      baseY: block.y,
+      baseW: block.w,
+      baseH: block.h,
+      anchor,
+      zoom: viewport.zoom
+    };
+  };
+
+  const rotateSelected = (step = 90) => {
+    if (!selectedBlock || isAllocationMode) return;
+    updateSelectedBlock({
+      rotation: (((Number(selectedBlock.rotation || 0) + Number(step || 0)) % 360) + 360) % 360
+    });
+  };
+
+  const focusBlock = (block) => {
+    if (!block) return;
+    setSelectedBlockId(block.uid);
+    const wrap = canvasWrapRef.current;
+    if (!wrap) return;
+    const cx = block.x + block.w / 2;
+    const cy = block.y + block.h / 2;
+    const vx = wrap.clientWidth / 2 - cx * viewport.zoom;
+    const vy = wrap.clientHeight / 2 - cy * viewport.zoom;
+    setViewport((prev) => ({ ...prev, x: Math.round(vx), y: Math.round(vy) }));
+  };
+
+  useEffect(() => {
+    loadMaps();
+  }, [loadMaps]);
+
+  useEffect(() => {
+    debouncedSearchUpdate(search);
+  }, [search, debouncedSearchUpdate]);
+
+  useEffect(() => () => cancelDebouncedSearchUpdate(), [cancelDebouncedSearchUpdate]);
+
+  useEffect(() => {
+    if (page > totalPages) setPage(totalPages);
+  }, [page, totalPages]);
+
+  useEffect(() => {
+    if (forcedMode !== "editor" && allocation.movementCod > 0 && rows.length > 0 && !wizardOpen && !activeWarehouseId) {
+      openWizardForWarehouse(rows[0]?.id, forcedMode);
+      loadAllocationByMovement(allocation.movementCod);
+    }
+  }, [activeWarehouseId, allocation.movementCod, forcedMode, loadAllocationByMovement, openWizardForWarehouse, rows, wizardOpen]);
+
+  useEffect(() => {
+    const onPointerMove = (event) => {
+      if (panRef.current && panRef.current.pointerId === event.pointerId) {
+        const state = panRef.current;
+        setViewport((prev) => ({ ...prev, x: Math.round(state.baseX + (event.clientX - state.startX)), y: Math.round(state.baseY + (event.clientY - state.startY)) }));
+        return;
+      }
+      if (dragRef.current && dragRef.current.pointerId === event.pointerId) {
+        const state = dragRef.current;
+        const dx = (event.clientX - state.startX) / state.zoom;
+        const dy = (event.clientY - state.startY) / state.zoom;
+        setLayout((prev) => ({
+          ...prev,
+          blocks: prev.blocks.map((b) => (b.uid === state.id ? { ...b, x: Math.round(state.baseX + dx), y: Math.round(state.baseY + dy) } : b))
+        }));
+        return;
+      }
+      if (resizeRef.current && resizeRef.current.pointerId === event.pointerId) {
+        const state = resizeRef.current;
+        const dx = (event.clientX - state.startX) / state.zoom;
+        const dy = (event.clientY - state.startY) / state.zoom;
+        const minW = 40;
+        const minH = 30;
+        let nextX = state.baseX;
+        let nextY = state.baseY;
+        let nextW = state.baseW;
+        let nextH = state.baseH;
+
+        if (state.anchor === "br") {
+          nextW = state.baseW + dx;
+          nextH = state.baseH + dy;
+        } else if (state.anchor === "tr") {
+          nextW = state.baseW + dx;
+          nextH = state.baseH - dy;
+          nextY = state.baseY + dy;
+        } else if (state.anchor === "bl") {
+          nextW = state.baseW - dx;
+          nextH = state.baseH + dy;
+          nextX = state.baseX + dx;
+        } else if (state.anchor === "tl") {
+          nextW = state.baseW - dx;
+          nextH = state.baseH - dy;
+          nextX = state.baseX + dx;
+          nextY = state.baseY + dy;
+        } else if (state.anchor === "t") {
+          nextH = state.baseH - dy;
+          nextY = state.baseY + dy;
+        } else if (state.anchor === "b") {
+          nextH = state.baseH + dy;
+        } else if (state.anchor === "l") {
+          nextW = state.baseW - dx;
+          nextX = state.baseX + dx;
+        } else if (state.anchor === "r") {
+          nextW = state.baseW + dx;
+        }
+
+        if (nextW < minW) {
+          if (state.anchor === "tl" || state.anchor === "bl") {
+            nextX -= minW - nextW;
+          }
+          nextW = minW;
+        }
+        if (nextH < minH) {
+          if (state.anchor === "tl" || state.anchor === "tr") {
+            nextY -= minH - nextH;
+          }
+          nextH = minH;
+        }
+
+        setLayout((prev) => ({
+          ...prev,
+          blocks: prev.blocks.map((b) =>
+            b.uid === state.id
+              ? { ...b, x: Math.round(nextX), y: Math.round(nextY), w: Math.round(nextW), h: Math.round(nextH) }
+              : b
+          )
+        }));
+      }
+    };
+    const onPointerUp = (event) => {
+      if (panRef.current?.pointerId === event.pointerId) panRef.current = null;
+      if (dragRef.current?.pointerId === event.pointerId) dragRef.current = null;
+      if (resizeRef.current?.pointerId === event.pointerId) resizeRef.current = null;
+    };
+    window.addEventListener("pointermove", onPointerMove);
+    window.addEventListener("pointerup", onPointerUp);
+    return () => {
+      window.removeEventListener("pointermove", onPointerMove);
+      window.removeEventListener("pointerup", onPointerUp);
+    };
+  }, []);
+
+  const startPan = (event) => {
+    if (event.button !== 0 && event.button !== 1) return;
+    const target = event.target;
+    if (!(target instanceof HTMLElement) || !target.closest("[data-canvas-bg='1']")) return;
+    event.preventDefault();
+    panRef.current = { pointerId: event.pointerId, startX: event.clientX, startY: event.clientY, baseX: viewport.x, baseY: viewport.y };
+  };
+
+  const onCanvasWheel = (event) => {
+    event.preventDefault();
+    const wrap = canvasWrapRef.current;
+    if (!wrap) return;
+    const rect = wrap.getBoundingClientRect();
+    const localX = event.clientX - rect.left;
+    const localY = event.clientY - rect.top;
+    setViewport((prev) => {
+      const nextZoom = clamp(prev.zoom + (event.deltaY > 0 ? -0.1 : 0.1), 0.25, 3);
+      const worldX = (localX - prev.x) / prev.zoom;
+      const worldY = (localY - prev.y) / prev.zoom;
+      return { zoom: nextZoom, x: Math.round(localX - worldX * nextZoom), y: Math.round(localY - worldY * nextZoom) };
+    });
+  };
+
+  return (
+    <AppLayout
+      fullscreen
+      contextLabel="Magazzino-Lab"
+      pageTitle="Piantine Magazzino"
+      brandContext="Magazzino"
+      defaultOpenSection="MAGAZZINO-LAB"
+      mainClassName="flex min-h-0 flex-1 flex-col gap-3 px-3 py-6 min-w-0 w-full max-w-full overflow-x-hidden sm:px-6"
+    >
+      <section className="warehouse-section flex min-h-0 min-w-0 w-full max-w-full flex-1 flex-col overflow-x-hidden rounded-lg border border-[var(--border)] bg-[var(--surface)] p-3 sm:p-4">
+        <div className="min-w-0">
+          <label className="text-xs uppercase tracking-[0.2em] text-[var(--muted)]">Ricerca</label>
+          <div className="mt-2 flex min-w-0 flex-wrap items-center gap-3">
+            <div className="min-w-0 flex-1">
+              <div className="flex items-center rounded-md border border-[var(--border)] bg-[var(--surface)] px-3 py-2">
+                <button type="button" onClick={() => loadMaps()} disabled={loading} className="flex h-8 w-8 min-h-[32px] min-w-[32px] items-center justify-center rounded-md text-[var(--muted)] transition hover:bg-[var(--hover)] disabled:opacity-60" aria-label="Aggiorna elenco">
+                  <i className="fa-solid fa-rotate-right text-[12px]" aria-hidden="true" />
+                </button>
+                <i className="fa-solid fa-magnifying-glass ml-2 text-[12px] text-[var(--muted)]" aria-hidden="true" />
+                <input type="text" value={search} onChange={(event) => setSearch(event.target.value)} placeholder="Nome o indirizzo magazzino" className="ml-3 w-full bg-transparent text-sm outline-none" />
+              </div>
+            </div>
+
+            <button type="button" onClick={() => setCreateOpen(true)} className="h-9 rounded-md border border-[var(--border)] px-3 text-xs font-semibold uppercase tracking-[0.15em] text-[var(--page-fg)] transition hover:bg-[var(--hover)]">
+              Nuovo magazzino
+            </button>
+
+            <div className="flex items-center gap-2 text-sm">
+              <div className="flex items-center gap-2 text-xs text-[var(--muted)]">
+                <span>Righe</span>
+                <select value={limit} onChange={(event) => { setLimit(parseInt(event.target.value, 10)); setPage(1); }} className="h-8 rounded-md border border-[var(--border)] bg-[var(--surface)] px-2 text-xs">
+                  <option value="20">20</option>
+                  <option value="50">50</option>
+                  <option value="100">100</option>
+                </select>
+              </div>
+              <button type="button" onClick={() => setPage((prev) => Math.max(1, prev - 1))} disabled={page <= 1} className="h-8 rounded-md border border-[var(--border)] px-3 text-xs text-[var(--muted)] transition hover:bg-[var(--hover)] disabled:opacity-40">Prev</button>
+              <span className="text-xs text-[var(--muted)]">{page} / {totalPages}</span>
+              <button type="button" onClick={() => setPage((prev) => Math.min(totalPages, prev + 1))} disabled={page >= totalPages} className="h-8 rounded-md border border-[var(--border)] px-3 text-xs transition hover:bg-[var(--hover)] disabled:opacity-40">Next</button>
+            </div>
+          </div>
+          <p className="mt-2 text-xs text-[var(--muted)]">Da {fromIndex} a {toIndex} magazzini di {total}</p>
+        </div>
+
+        {error ? <p className="mt-3 text-sm text-rose-500">{error}</p> : null}
+        {info ? <p className="mt-3 text-sm text-emerald-400">{info}</p> : null}
+
+        <div className="mt-3 min-h-0 flex-1 overflow-auto rounded-md border border-[var(--border)]">
+          <table className="warehouse-table table-dense min-w-[980px] w-full table-fixed text-xs">
+            <thead className="sticky top-0 z-10 bg-[var(--surface-strong)]">
+              <tr className="text-left text-[10px] uppercase tracking-[0.2em] text-[var(--muted)]">
+                <th className="w-[24%] px-3 py-2">Nome</th>
+                <th className="w-[26%] px-3 py-2">Indirizzo</th>
+                <th className="w-[18%] px-3 py-2">Ultimo aggiornamento</th>
+                <th className="w-[20%] px-3 py-2">Note</th>
+                <th className="w-[6%] px-3 py-2 text-center">Blocchi</th>
+                <th className="w-[6%] px-3 py-2 text-right">Azione</th>
+              </tr>
+            </thead>
+            <tbody>
+              {rows.map((row) => (
+                <tr key={row.id} className="border-t border-[var(--border)] hover:bg-[var(--hover)]/40">
+                  <td className="px-3 py-2 font-semibold truncate" title={row.name || ""}>{row.name || "-"}</td>
+                  <td className="px-3 py-2 truncate" title={row.address || ""}>{row.address || "-"}</td>
+                  <td className="px-3 py-2">{formatDateTime(row.lastUpdatedAt || row.updatedAt)}</td>
+                  <td className="px-3 py-2 truncate" title={row.notes || ""}>{row.notes || "-"}</td>
+                  <td className="px-3 py-2 text-center">{Number(row.blocksCount || 0)}</td>
+                  <td className="px-3 py-2 text-right">
+                    <button type="button" onClick={() => openWizardForWarehouse(row.id, forcedMode)} className="h-7 rounded-md border border-[var(--border)] px-2 text-[11px] transition hover:bg-[var(--hover)]">Apri</button>
+                  </td>
+                </tr>
+              ))}
+              {!loading && rows.length === 0 ? <tr><td colSpan={6} className="px-3 py-8 text-center text-xs text-[var(--muted)]">Nessun magazzino trovato.</td></tr> : null}
+            </tbody>
+          </table>
+        </div>
+      </section>
+
+      {createOpen ? (
+        <div className="fixed inset-0 z-[80] flex items-center justify-center bg-black/70 px-3" onMouseDown={() => setCreateOpen(false)}>
+          <div className="w-full max-w-xl rounded-xl border border-[var(--border)] bg-[var(--surface)] p-4" onMouseDown={(event) => event.stopPropagation()}>
+            <div className="flex items-start justify-between gap-3">
+              <div><p className="text-xs uppercase tracking-[0.2em] text-[var(--muted)]">Magazzino</p><h3 className="text-lg font-semibold">Nuovo magazzino</h3></div>
+              <button type="button" onClick={() => setCreateOpen(false)} className="h-8 w-8 rounded-md border border-[var(--border)] text-[var(--muted)] hover:bg-[var(--hover)]"><i className="fa-solid fa-xmark" aria-hidden="true" /></button>
+            </div>
+            <div className="mt-4 grid gap-3">
+              <label className="grid gap-1 text-xs text-[var(--muted)]">Nome<input value={createDraft.name} onChange={(event) => setCreateDraft((prev) => ({ ...prev, name: event.target.value }))} className="h-10 rounded-md border border-[var(--border)] bg-[var(--surface)] px-3 text-sm" /></label>
+              <label className="grid gap-1 text-xs text-[var(--muted)]">Indirizzo<input value={createDraft.address} onChange={(event) => setCreateDraft((prev) => ({ ...prev, address: event.target.value }))} className="h-10 rounded-md border border-[var(--border)] bg-[var(--surface)] px-3 text-sm" /></label>
+              <label className="grid gap-1 text-xs text-[var(--muted)]">Ultimo aggiornamento<input type="datetime-local" value={createDraft.lastUpdatedAt} onChange={(event) => setCreateDraft((prev) => ({ ...prev, lastUpdatedAt: event.target.value }))} className="h-10 rounded-md border border-[var(--border)] bg-[var(--surface)] px-3 text-sm" /></label>
+              <label className="grid gap-1 text-xs text-[var(--muted)]">Note<textarea value={createDraft.notes} onChange={(event) => setCreateDraft((prev) => ({ ...prev, notes: event.target.value }))} className="h-24 resize-none rounded-md border border-[var(--border)] bg-[var(--surface)] px-3 py-2 text-sm" /></label>
+            </div>
+            <div className="mt-4 flex items-center justify-end gap-2">
+              <button type="button" className="h-9 rounded-md border border-[var(--border)] px-3 text-xs" onClick={() => setCreateOpen(false)}>Annulla</button>
+              <button type="button" disabled={creating || !String(createDraft.name || "").trim()} onClick={createWarehouse} className="h-9 rounded-md bg-emerald-500 px-3 text-xs font-semibold text-white disabled:opacity-60">{creating ? "Creazione..." : "Crea e apri wizard"}</button>
+            </div>
+          </div>
+        </div>
+      ) : null}
+
+      {wizardOpen ? (
+        <div className="fixed inset-0 z-[90] bg-black/75 p-3" onMouseDown={closeWizard}>
+          <div className="flex h-full w-full min-h-0 flex-col rounded-xl border border-[var(--border)] bg-[var(--surface)]" onMouseDown={(event) => event.stopPropagation()}>
+            <div className="flex items-center justify-between border-b border-[var(--border)] px-4 py-3">
+              <div><p className="text-xs uppercase tracking-[0.2em] text-[var(--muted)]">Wizard Magazzino</p><h3 className="text-lg font-semibold">{activeWarehouseName || "Piantina"}</h3></div>
+              <div className="flex items-center gap-2">
+                <button type="button" className="h-9 w-9 rounded-md border border-[var(--border)]" onClick={() => setViewport((prev) => ({ ...prev, zoom: clamp(prev.zoom - 0.1, 0.25, 3) }))}>-</button>
+                <button type="button" className="h-9 w-9 rounded-md border border-[var(--border)]" onClick={() => setViewport((prev) => ({ ...prev, zoom: clamp(prev.zoom + 0.1, 0.25, 3) }))}>+</button>
+                <button type="button" className="h-9 rounded-md border border-[var(--border)] px-3 text-xs" onClick={() => setViewport({ zoom: 1, x: 24, y: 24 })}>Reset view</button>
+                {!isAllocationMode ? <button type="button" onClick={saveWarehouseLayout} disabled={saving} className="h-9 rounded-md bg-emerald-500 px-3 text-xs font-semibold text-white disabled:opacity-60">{saving ? "Salvataggio..." : "Salva"}</button> : null}
+                {wizardMode === "manage" ? <button type="button" onClick={saveAllocation} disabled={allocation.saving} className="h-9 rounded-md bg-emerald-500 px-3 text-xs font-semibold text-white disabled:opacity-60">{allocation.saving ? "Salvataggio..." : "Salva allocazione"}</button> : null}
+                <button type="button" className="h-9 w-9 rounded-md border border-[var(--border)]" onClick={closeWizard}><i className="fa-solid fa-xmark" aria-hidden="true" /></button>
+              </div>
+            </div>
+
+            <div className="flex min-h-0 flex-1 flex-row gap-3 p-3">
+              <div className="min-h-0 w-[340px] shrink-0 overflow-auto rounded-md border border-[var(--border)] p-3">
+                <p className="text-xs uppercase tracking-[0.2em] text-[var(--muted)]">{isAllocationMode ? "Allocazione" : "Strumenti wizard"}</p>
+                {!isAllocationMode ? (
+                  <>
+                    <div className="mt-2 flex flex-wrap gap-2">
+                      <button type="button" className="rounded-md border border-[var(--border)] px-2 py-1 text-xs" onClick={() => addElement("shelf")}>+ Scaffale</button>
+                      <button type="button" className="rounded-md border border-[var(--border)] px-2 py-1 text-xs" onClick={() => addElement("prop")}>+ Prop</button>
+                      <button type="button" className="rounded-md border border-[var(--border)] px-2 py-1 text-xs" onClick={() => addElement("shape")}>+ Forma</button>
+                    </div>
+                    <div className="mt-2 flex flex-wrap gap-2">
+                      <button type="button" className="rounded-md border border-[var(--border)] px-2 py-1 text-xs text-rose-400" onClick={() => selectedBlock && setLayout((prev) => { const next = prev.blocks.filter((b) => b.uid !== selectedBlock.uid); setSelectedBlockId(next[0]?.uid || ""); return { ...prev, blocks: next }; })} disabled={!selectedBlock}>Elimina selezionato</button>
+                    </div>
+                  </>
+                ) : null}
+
+                {selectedBlock ? (
+                  <div className="mt-4 space-y-2 border-t border-[var(--border)] pt-3">
+                    <p className="text-xs uppercase tracking-[0.2em] text-[var(--muted)]">Elemento selezionato</p>
+                    <input value={selectedBlock.label || ""} onChange={(event) => !isAllocationMode && updateSelectedBlock({ label: event.target.value })} disabled={isAllocationMode} className="h-8 w-full rounded-md border border-[var(--border)] bg-[var(--surface)] px-2 text-xs" />
+                    {selectedBlock.kind === "shape" && !isAllocationMode ? <select value={selectedBlock.shape || "rect"} onChange={(event) => updateSelectedBlock({ shape: event.target.value })} className="h-8 w-full rounded-md border border-[var(--border)] bg-[var(--surface)] px-2 text-xs"><option value="rect">Rettangolo</option><option value="circle">Cerchio</option></select> : null}
+                  </div>
+                ) : null}
+
+                <div className="mt-4 space-y-2 border-t border-[var(--border)] pt-3">
+                  <p className="text-xs uppercase tracking-[0.2em] text-[var(--muted)]">Scaffali</p>
+                  <div className="max-h-44 overflow-auto rounded-md border border-[var(--border)]">
+                    {shelfBlocks.length > 0 ? (
+                      shelfBlocks.map((shelf) => (
+                        <button
+                          key={shelf.id}
+                          type="button"
+                          className={`flex h-8 w-full items-center justify-between px-2 text-left text-xs transition ${
+                            selectedBlockId === shelf.uid ? "bg-emerald-500/15 text-emerald-200" : "hover:bg-[var(--hover)]"
+                          }`}
+                          onClick={() => focusBlock(shelf)}
+                        >
+                          <span className="truncate">{shelf.label || shelf.id}</span>
+                          <span className="text-[10px] text-[var(--muted)]">
+                            {shelf.w}x{shelf.h}
+                          </span>
+                        </button>
+                      ))
+                    ) : (
+                      <p className="px-2 py-3 text-xs text-[var(--muted)]">Nessuno scaffale</p>
+                    )}
+                  </div>
+                </div>
+
+                {!isAllocationMode && selectedBlock ? (
+                  <div className="mt-4 space-y-2 border-t border-[var(--border)] pt-3">
+                    <p className="text-xs uppercase tracking-[0.2em] text-[var(--muted)]">Controlli rapidi</p>
+                    <div className="grid grid-cols-2 gap-2">
+                      <button type="button" className="h-8 rounded-md border border-[var(--border)] px-2 text-xs" onClick={() => rotateSelected(45)}>Ruota 45°</button>
+                      <button type="button" className="h-8 rounded-md border border-[var(--border)] px-2 text-xs" onClick={() => rotateSelected(90)}>Ruota 90°</button>
+                      <button type="button" className="h-8 rounded-md border border-[var(--border)] px-2 text-xs" onClick={() => updateSelectedBlock({ w: Math.max(40, Number(selectedBlock.w || 0) + 10) })}>Larghezza +</button>
+                      <button type="button" className="h-8 rounded-md border border-[var(--border)] px-2 text-xs" onClick={() => updateSelectedBlock({ w: Math.max(40, Number(selectedBlock.w || 0) - 10) })}>Larghezza -</button>
+                      <button type="button" className="h-8 rounded-md border border-[var(--border)] px-2 text-xs" onClick={() => updateSelectedBlock({ h: Math.max(30, Number(selectedBlock.h || 0) + 10) })}>Altezza +</button>
+                      <button type="button" className="h-8 rounded-md border border-[var(--border)] px-2 text-xs" onClick={() => updateSelectedBlock({ h: Math.max(30, Number(selectedBlock.h || 0) - 10) })}>Altezza -</button>
+                      <button type="button" className="h-8 rounded-md border border-[var(--border)] px-2 text-xs" onClick={() => updateSelectedBlock({ x: Number(selectedBlock.x || 0) - 10 })}>X -</button>
+                      <button type="button" className="h-8 rounded-md border border-[var(--border)] px-2 text-xs" onClick={() => updateSelectedBlock({ x: Number(selectedBlock.x || 0) + 10 })}>X +</button>
+                      <button type="button" className="h-8 rounded-md border border-[var(--border)] px-2 text-xs" onClick={() => updateSelectedBlock({ y: Number(selectedBlock.y || 0) - 10 })}>Y -</button>
+                      <button type="button" className="h-8 rounded-md border border-[var(--border)] px-2 text-xs" onClick={() => updateSelectedBlock({ y: Number(selectedBlock.y || 0) + 10 })}>Y +</button>
+                    </div>
+                  </div>
+                ) : null}
+
+                {isAllocationMode ? (
+                  <div className="mt-4 space-y-2 border-t border-[var(--border)] pt-3">
+                    <input value={allocation.scaffale} onChange={(event) => wizardMode === "manage" ? setAllocation((prev) => ({ ...prev, scaffale: event.target.value })) : null} disabled={wizardMode !== "manage"} className="h-8 w-full rounded-md border border-[var(--border)] bg-[var(--surface)] px-2 text-xs" placeholder="Scaffale" />
+                    <div className="grid grid-cols-2 gap-2">
+                      <input value={allocation.riga} onChange={(event) => wizardMode === "manage" ? setAllocation((prev) => ({ ...prev, riga: event.target.value })) : null} disabled={wizardMode !== "manage"} className="h-8 rounded-md border border-[var(--border)] bg-[var(--surface)] px-2 text-xs" placeholder="Riga" />
+                      <input value={allocation.colonna} onChange={(event) => wizardMode === "manage" ? setAllocation((prev) => ({ ...prev, colonna: event.target.value })) : null} disabled={wizardMode !== "manage"} className="h-8 rounded-md border border-[var(--border)] bg-[var(--surface)] px-2 text-xs" placeholder="Colonna" />
+                    </div>
+                    <textarea value={allocation.note} onChange={(event) => wizardMode === "manage" ? setAllocation((prev) => ({ ...prev, note: event.target.value })) : null} disabled={wizardMode !== "manage"} className="h-20 w-full resize-none rounded-md border border-[var(--border)] bg-[var(--surface)] px-2 py-1 text-xs" placeholder="Note" />
+                    {allocation.loading ? <p className="text-xs text-[var(--muted)]">Caricamento allocazione...</p> : null}
+                  </div>
+                ) : null}
+              </div>
+
+              <div
+                ref={canvasWrapRef}
+                data-canvas-bg="1"
+                className="relative min-h-0 min-w-0 flex-1 overflow-hidden rounded-md border border-[var(--border)] bg-[var(--surface-soft)]"
+                style={{
+                  backgroundImage:
+                    "linear-gradient(to right, rgba(148,163,184,0.12) 1px, transparent 1px), linear-gradient(to bottom, rgba(148,163,184,0.12) 1px, transparent 1px)",
+                  backgroundSize: "24px 24px"
+                }}
+                onWheel={onCanvasWheel}
+                onPointerDown={startPan}
+              >
+                <div className="absolute left-0 top-0" style={{ width: layout.width, height: layout.height, transform: `translate(${viewport.x}px, ${viewport.y}px) scale(${viewport.zoom})`, transformOrigin: "top left" }}>
+                  <div data-canvas-bg="1" className="absolute inset-0" />
+                  {layout.blocks.map((block) => {
+                    const active = block.uid === selectedBlockId;
+                    const allocHighlight = allocationBlockId === block.id;
+                    const isShape = block.kind === "shape";
+                    const isProp = block.kind === "prop";
+                    return (
+                      <button
+                        key={block.uid}
+                        type="button"
+                        className={`absolute relative flex items-center justify-center overflow-visible rounded border px-1 text-[11px] font-semibold shadow ${
+                          allocHighlight ? "border-cyan-300 ring-2 ring-cyan-400/60" : active ? "border-emerald-300 ring-2 ring-emerald-400/40" : "border-black/30"
+                        }`}
+                        style={{
+                          left: block.x,
+                          top: block.y,
+                          width: block.w,
+                          height: block.h,
+                          backgroundColor: isShape ? `${block.color}55` : block.color,
+                          color: "#0a0a0a",
+                          transform: `rotate(${Number(block.rotation || 0)}deg)`,
+                          transformOrigin: "center center",
+                          borderStyle: isProp ? "dashed" : "solid",
+                          borderRadius: isShape && block.shape === "circle" ? "9999px" : "8px"
+                        }}
+                        onPointerDown={(event) => {
+                          if (event.button !== 0 && event.button !== 1) return;
+                          event.preventDefault();
+                          event.stopPropagation();
+                          setSelectedBlockId(block.uid);
+                          if (wizardMode === "manage" && block.kind === "shelf") setAllocation((prev) => ({ ...prev, scaffale: String(block.label || block.id || "") }));
+                          if (isAllocationMode) return;
+                          dragRef.current = { pointerId: event.pointerId, id: block.uid, startX: event.clientX, startY: event.clientY, baseX: block.x, baseY: block.y, zoom: viewport.zoom };
+                        }}
+                      >
+                        <span className="pointer-events-none">{block.label || block.id}</span>
+                        {!isAllocationMode ? (
+                          <span className={active ? "pointer-events-none absolute inset-0 z-30 block" : "hidden"}>
+                            {[
+                              { a: "tl", l: "-1%", t: "-1%", c: "nwse-resize", label: "alto sinistra", rot: "-45deg" },
+                              { a: "t", l: "50%", t: "-1%", c: "ns-resize", label: "alto", rot: "0deg" },
+                              { a: "tr", l: "101%", t: "-1%", c: "nesw-resize", label: "alto destra", rot: "45deg" },
+                              { a: "r", l: "101%", t: "50%", c: "ew-resize", label: "destra", rot: "90deg" },
+                              { a: "br", l: "101%", t: "101%", c: "nwse-resize", label: "basso destra", rot: "135deg" },
+                              { a: "b", l: "50%", t: "101%", c: "ns-resize", label: "basso", rot: "180deg" },
+                              { a: "bl", l: "-1%", t: "101%", c: "nesw-resize", label: "basso sinistra", rot: "-135deg" },
+                              { a: "l", l: "-1%", t: "50%", c: "ew-resize", label: "sinistra", rot: "-90deg" }
+                            ].map((h) => (
+                              <span
+                                key={h.a}
+                                role="button"
+                                tabIndex={0}
+                                aria-label={`Ridimensiona elemento ${h.label}`}
+                                className="pointer-events-auto absolute flex h-3 w-3 items-center justify-center rounded-full border border-[var(--border)] bg-[var(--surface-strong)] text-[7px] text-emerald-300 shadow"
+                                style={{
+                                  left: h.l,
+                                  top: h.t,
+                                  cursor: h.c,
+                                  transform: "translate(-50%, -50%)"
+                                }}
+                                onPointerDown={(event) => beginResize(event, block, h.a)}
+                              >
+                                <i className="fa-solid fa-caret-up leading-none" style={{ transform: `rotate(${h.rot})` }} aria-hidden="true" />
+                              </span>
+                            ))}
+                          </span>
+                        ) : null}
+                      </button>
+                    );
+                  })}
+                </div>
+                <div className="pointer-events-none absolute bottom-3 left-3 rounded-md border border-[var(--border)] bg-black/60 px-2 py-1 text-[10px] text-[var(--muted)]">Zoom {Math.round(viewport.zoom * 100)}% - Pan: trascina lo sfondo</div>
+              </div>
+            </div>
+          </div>
+        </div>
+      ) : null}
+    </AppLayout>
+  );
+}
+
+

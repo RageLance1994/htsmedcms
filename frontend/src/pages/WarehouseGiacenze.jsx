@@ -1,4 +1,5 @@
 import { Fragment, memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useNavigate } from "react-router-dom";
 import AppLayout from "../components/AppLayout.jsx";
 import ContextMenu from "../components/ui/ContextMenu.jsx";
 import useDebouncedCallback from "../hooks/useDebouncedCallback.js";
@@ -49,6 +50,7 @@ const NEW_ARTICLE_COST_CENTER_OPTIONS = [
   "VENDITA RX"
 ];
 const NEW_ARTICLE_UNIT_OPTIONS = ["QT", "LITRI", "KG", "ORE", "METRI"];
+const YEAR_SCOPE_OPTIONS = [2026, 2025, 2024, 2023, 2022, 2021, 2020, 2019, 2018, 2017, 2016, 2015, 2014, 2013, 2009];
 const MOVEMENTS_COLUMN_DEFAULTS = {
   data: 130,
   codDdt: 110,
@@ -165,15 +167,33 @@ const ArticleCatalogRow = memo(function ArticleCatalogRow({
 });
 
 export default function WarehouseGiacenze() {
+  const navigate = useNavigate();
   const initialDprRef = useRef(null);
   const [items, setItems] = useState([]);
   const [page, setPage] = useState(1);
   const [debouncedSearch, setDebouncedSearch] = useState("");
   const [alertsOnly, setAlertsOnly] = useState(false);
+  const [giacenzeScope, setGiacenzeScope] = useState("complessivo");
+  const [referenceYear, setReferenceYear] = useState(new Date().getFullYear());
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
   const [openMenu, setOpenMenu] = useState("");
   const [showFilters, setShowFilters] = useState(false);
+  const [exportModalOpen, setExportModalOpen] = useState(false);
+  const [exportFileType, setExportFileType] = useState("pdf");
+  const [exportPageMode, setExportPageMode] = useState("current");
+  const [exportSelectedPages, setExportSelectedPages] = useState(() => new Set());
+  const [exportLoading, setExportLoading] = useState(false);
+  const [exportError, setExportError] = useState("");
+  const [movementsRowMenu, setMovementsRowMenu] = useState({ open: false, x: 0, y: 0, row: null, allocOpen: false });
+  const [mapWizardOpen, setMapWizardOpen] = useState(false);
+  const [mapBlocks, setMapBlocks] = useState([
+    { id: "M1", label: "M1", x: 40, y: 40, w: 120, h: 46, color: "#4ade80" },
+    { id: "M2", label: "M2", x: 220, y: 40, w: 120, h: 46, color: "#4ade80" },
+    { id: "M3", label: "M3", x: 400, y: 40, w: 120, h: 46, color: "#4ade80" }
+  ]);
+  const [selectedMapBlockId, setSelectedMapBlockId] = useState("M1");
+  const mapDragRef = useRef(null);
   const toolbarRef = useRef(null);
   const movimentiBtnRef = useRef(null);
   const strumentiBtnRef = useRef(null);
@@ -282,6 +302,19 @@ export default function WarehouseGiacenze() {
   const effectiveLimit = Number(limit || 50);
   const totalPages = useMemo(() => Math.max(Math.ceil(total / effectiveLimit), 1), [total, effectiveLimit]);
   const pagedItems = items;
+  const exportPageRows = useMemo(() => {
+    return Array.from({ length: totalPages }, (_, idx) => {
+      const pageNumber = idx + 1;
+      const start = (pageNumber - 1) * effectiveLimit;
+      const remaining = Math.max(total - start, 0);
+      const itemsCount = Math.min(remaining, effectiveLimit);
+      return { pageNumber, itemsCount };
+    });
+  }, [totalPages, total, effectiveLimit]);
+  const selectedMapBlock = useMemo(
+    () => mapBlocks.find((row) => row.id === selectedMapBlockId) || null,
+    [mapBlocks, selectedMapBlockId]
+  );
   const movementsTotalPages = useMemo(
     () => Math.max(Math.ceil(Number(movementsTotal || 0) / Number(movementsLimit || 1)), 1),
     [movementsTotal, movementsLimit]
@@ -306,6 +339,8 @@ export default function WarehouseGiacenze() {
         limit: String(effectiveLimit),
         search: debouncedSearch,
         alerts: alertsOnly ? "1" : "0",
+        scope: giacenzeScope,
+        year: String(referenceYear),
         sortBy: sortKey,
         sortDir: sortDir || "asc"
       });
@@ -399,6 +434,218 @@ export default function WarehouseGiacenze() {
     }
   }, []);
 
+  const openExportModal = () => {
+    setOpenMenu("");
+    setExportFileType("pdf");
+    setExportPageMode("current");
+    setExportSelectedPages(new Set([page]));
+    setExportModalOpen(true);
+  };
+
+  const openMapWizard = useCallback(() => {
+    setOpenMenu("");
+    navigate("/warehouse/mappe");
+  }, [navigate]);
+
+  const closeMovementsContextMenu = () => {
+    setMovementsRowMenu({ open: false, x: 0, y: 0, row: null, allocOpen: false });
+  };
+  const openAllocationMapPanel = useCallback((mode) => {
+    const row = movementsRowMenu?.row;
+    if (!row) return;
+    const params = new URLSearchParams({
+      action: mode === "manage" ? "gestisci-allocazione" : "visualizza-allocazione",
+      movementCod: String(row.codMovimento || ""),
+      codiceArticolo: String(row.codiceArticolo || ""),
+      seriale: String(row.seriale || ""),
+      scaffale: String(row.scaffale || "")
+    });
+    const url = `/warehouse/mappe?${params.toString()}`;
+    window.open(url, "_blank", "noopener,noreferrer");
+    closeMovementsContextMenu();
+  }, [movementsRowMenu]);
+
+  const toggleExportSelectedPage = (pageNumber) => {
+    setExportSelectedPages((prev) => {
+      const next = new Set(prev);
+      if (next.has(pageNumber)) {
+        next.delete(pageNumber);
+      } else {
+        next.add(pageNumber);
+      }
+      return next;
+    });
+  };
+
+  const escapeCsv = (value) => {
+    const str = String(value ?? "");
+    if (/[",;\n\r]/.test(str)) {
+      return `"${str.replace(/"/g, '""')}"`;
+    }
+    return str;
+  };
+
+  const formatExportRows = (rows) =>
+    rows.map((row) => ({
+      codice: row.codiceArticolo || "",
+      descrizione: row.descrizione || "",
+      giacenzaFiscale: Number(row.giacenzaFiscale || 0),
+      giacenzaFisica: Number(row.giacenzaFisica || 0),
+      unitaMisura: row.unitaMisura || "",
+      giacenzaMinima: Number(row.giacenzaMinima || 0),
+      alert: Number(row.giacenzaFisica || 0) < Number(row.giacenzaMinima || 0) ? "SOTTO SCORTA" : "OK"
+    }));
+
+  const downloadBlob = (blob, filename) => {
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = filename;
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    URL.revokeObjectURL(url);
+  };
+
+  const fetchExportPage = async (pageNumber) => {
+    const params = new URLSearchParams({
+      page: String(pageNumber),
+      limit: String(effectiveLimit),
+      search: debouncedSearch,
+      alerts: alertsOnly ? "1" : "0",
+      scope: giacenzeScope,
+      year: String(referenceYear),
+      sortBy: sortKey,
+      sortDir: sortDir || "asc"
+    });
+    const res = await fetch(`${API_BASE}/api/warehouse/giacenze?${params.toString()}`);
+    if (!res.ok) throw new Error("Errore durante il recupero dati export");
+    const payload = await res.json();
+    return Array.isArray(payload?.data) ? payload.data : [];
+  };
+
+  const handleExportDownload = async () => {
+    setExportLoading(true);
+    setExportError("");
+    try {
+      let pagesToFetch = [];
+      if (exportPageMode === "current") {
+        pagesToFetch = [page];
+      } else if (exportPageMode === "selected") {
+        pagesToFetch = Array.from(exportSelectedPages).sort((a, b) => a - b);
+        if (pagesToFetch.length === 0) {
+          throw new Error("Seleziona almeno una pagina da esportare.");
+        }
+      } else {
+        pagesToFetch = Array.from({ length: totalPages }, (_, idx) => idx + 1);
+      }
+
+      const allRows = [];
+      for (const pageNumber of pagesToFetch) {
+        const rows = await fetchExportPage(pageNumber);
+        allRows.push(...rows);
+      }
+
+      const exportRows = formatExportRows(allRows);
+      const timestamp = new Date().toISOString().replace(/[:.]/g, "-");
+      const scopeLabel = giacenzeScope === "annuale" ? `annuale-${referenceYear}` : "complessivo";
+
+      if (exportFileType === "csv") {
+        const headers = ["Codice", "Descrizione", "Giacenza Fiscale", "Giacenza Fisica", "Unita Misura", "Giacenza Minima", "Alert"];
+        const lines = [
+          headers.join(";"),
+          ...exportRows.map((row) =>
+            [
+              escapeCsv(row.codice),
+              escapeCsv(row.descrizione),
+              escapeCsv(row.giacenzaFiscale),
+              escapeCsv(row.giacenzaFisica),
+              escapeCsv(row.unitaMisura),
+              escapeCsv(row.giacenzaMinima),
+              escapeCsv(row.alert)
+            ].join(";")
+          )
+        ];
+        const csv = "\uFEFF" + lines.join("\n");
+        downloadBlob(new Blob([csv], { type: "text/csv;charset=utf-8;" }), `giacenze-${scopeLabel}-${timestamp}.csv`);
+      } else if (exportFileType === "xlsx") {
+        const headers = ["Codice", "Descrizione", "Giacenza Fiscale", "Giacenza Fisica", "Unita Misura", "Giacenza Minima", "Alert"];
+        const tableRows = exportRows
+          .map(
+            (row) =>
+              `<tr><td>${row.codice}</td><td>${row.descrizione}</td><td>${row.giacenzaFiscale}</td><td>${row.giacenzaFisica}</td><td>${row.unitaMisura}</td><td>${row.giacenzaMinima}</td><td>${row.alert}</td></tr>`
+          )
+          .join("");
+        const html = `<!DOCTYPE html><html><head><meta charset="utf-8"></head><body><table><thead><tr>${headers
+          .map((h) => `<th>${h}</th>`)
+          .join("")}</tr></thead><tbody>${tableRows}</tbody></table></body></html>`;
+        downloadBlob(
+          new Blob([html], { type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet;charset=utf-8;" }),
+          `giacenze-${scopeLabel}-${timestamp}.xlsx`
+        );
+      } else {
+        const win = window.open("", "_blank", "noopener,noreferrer,width=1200,height=900");
+        if (!win) throw new Error("Popup bloccato dal browser.");
+        const headers = ["Codice", "Descrizione", "Giacenza Fiscale", "Giacenza Fisica", "Unita Misura", "Giacenza Minima", "Alert"];
+        const bodyRows = exportRows
+          .map(
+            (row) =>
+              `<tr><td>${row.codice}</td><td>${row.descrizione}</td><td>${row.giacenzaFiscale}</td><td>${row.giacenzaFisica}</td><td>${row.unitaMisura}</td><td>${row.giacenzaMinima}</td><td>${row.alert}</td></tr>`
+          )
+          .join("");
+        win.document.write(`<!doctype html><html><head><meta charset="utf-8" /><title>Export giacenze</title><style>body{font-family:Arial,sans-serif;padding:16px}table{width:100%;border-collapse:collapse;font-size:12px}th,td{border:1px solid #ccc;padding:6px;text-align:left}th{background:#f1f1f1}</style></head><body><h2>Giacenze ${scopeLabel}</h2><table><thead><tr>${headers
+          .map((h) => `<th>${h}</th>`)
+          .join("")}</tr></thead><tbody>${bodyRows}</tbody></table></body></html>`);
+        win.document.close();
+        win.focus();
+        win.print();
+      }
+
+      setExportModalOpen(false);
+    } catch (err) {
+      setExportError(err.message || "Errore esportazione");
+    } finally {
+      setExportLoading(false);
+    }
+  };
+
+  const addMapBlock = () => {
+    const nextNumber =
+      mapBlocks.reduce((max, row) => {
+        const parsed = parseInt(String(row.id || "").replace(/[^\d]/g, ""), 10);
+        return Number.isFinite(parsed) ? Math.max(max, parsed) : max;
+      }, 0) + 1;
+    const id = `M${nextNumber}`;
+    const next = { id, label: id, x: 60, y: 140, w: 120, h: 46, color: "#4ade80" };
+    setMapBlocks((prev) => [...prev, next]);
+    setSelectedMapBlockId(id);
+  };
+
+  const removeSelectedMapBlock = () => {
+    if (!selectedMapBlockId) return;
+    setMapBlocks((prev) => prev.filter((row) => row.id !== selectedMapBlockId));
+    setSelectedMapBlockId((prev) => (prev === selectedMapBlockId ? "" : prev));
+  };
+
+  const updateSelectedMapBlock = (field, value) => {
+    if (!selectedMapBlockId) return;
+    setMapBlocks((prev) =>
+      prev.map((row) =>
+        row.id === selectedMapBlockId
+          ? {
+              ...row,
+              [field]:
+                field === "w" || field === "h"
+                  ? Math.max(40, Number(value || 0))
+                  : field === "x" || field === "y"
+                    ? Math.max(0, Number(value || 0))
+                    : value
+            }
+          : row
+      )
+    );
+  };
+
   const fetchSerials = async (codice) => {
     if (!codice || serialsByCode[codice] || serialsLoading[codice]) return;
     setSerialsLoading((prev) => ({ ...prev, [codice]: true }));
@@ -437,11 +684,11 @@ export default function WarehouseGiacenze() {
 
   useEffect(() => {
     fetchData();
-  }, [page, effectiveLimit, debouncedSearch, alertsOnly, sortKey, sortDir]);
+  }, [page, effectiveLimit, debouncedSearch, alertsOnly, giacenzeScope, referenceYear, sortKey, sortDir]);
 
   useEffect(() => {
     setPage(1);
-  }, [debouncedSearch, alertsOnly, limit, sortKey, sortDir]);
+  }, [debouncedSearch, alertsOnly, giacenzeScope, referenceYear, limit, sortKey, sortDir]);
 
   useEffect(() => {
     if (!movementsModalOpen) return;
@@ -1135,7 +1382,10 @@ export default function WarehouseGiacenze() {
   };
 
   useEffect(() => {
-    const closeRowMenu = () => setRowMenu({ open: false, x: 0, y: 0, item: null });
+    const closeRowMenu = () => {
+      setRowMenu({ open: false, x: 0, y: 0, item: null });
+      setMovementsRowMenu({ open: false, x: 0, y: 0, row: null, allocOpen: false });
+    };
     window.addEventListener("resize", closeRowMenu);
     window.addEventListener("scroll", closeRowMenu, true);
     document.addEventListener("mousedown", closeRowMenu);
@@ -1143,6 +1393,25 @@ export default function WarehouseGiacenze() {
       window.removeEventListener("resize", closeRowMenu);
       window.removeEventListener("scroll", closeRowMenu, true);
       document.removeEventListener("mousedown", closeRowMenu);
+    };
+  }, []);
+
+  useEffect(() => {
+    const onMove = (event) => {
+      if (!mapDragRef.current) return;
+      const { id, offsetX, offsetY } = mapDragRef.current;
+      const nextX = Math.max(0, event.clientX - offsetX);
+      const nextY = Math.max(0, event.clientY - offsetY);
+      setMapBlocks((prev) => prev.map((row) => (row.id === id ? { ...row, x: nextX, y: nextY } : row)));
+    };
+    const onUp = () => {
+      mapDragRef.current = null;
+    };
+    window.addEventListener("mousemove", onMove);
+    window.addEventListener("mouseup", onUp);
+    return () => {
+      window.removeEventListener("mousemove", onMove);
+      window.removeEventListener("mouseup", onUp);
     };
   }, []);
 
@@ -1233,12 +1502,23 @@ export default function WarehouseGiacenze() {
                   { label: "Pianta Magazzino", icon: "fa-map" },
                   { label: "Controlla Allocazione", icon: "fa-clipboard-check" },
                   { label: "Controlla Contiguita Seriali", icon: "fa-link" },
-                  { label: "Valorizzazione", icon: "fa-scale-balanced" }
+                  { label: "Valorizzazione", icon: "fa-scale-balanced" },
+                  { label: "Scarica", icon: "fa-download" }
                 ].map((item) => (
                   <button
                     key={item.label}
                     type="button"
                     className="flex w-full items-center gap-2 rounded-md px-3 py-2 text-sm whitespace-nowrap hover:bg-[var(--hover)]"
+                    onClick={() => {
+                      if (item.label === "Pianta Magazzino") {
+                        openMapWizard();
+                        return;
+                      }
+                      if (item.label === "Scarica") {
+                        openExportModal();
+                        return;
+                      }
+                    }}
                   >
                     <i className={`fa-solid ${item.icon} text-[12px] text-[var(--muted)]`} aria-hidden="true" />
                     {item.label}
@@ -1252,7 +1532,52 @@ export default function WarehouseGiacenze() {
 
       <section className="warehouse-section flex min-h-0 flex-1 flex-col rounded-lg border border-[var(--border)] bg-[var(--surface)] p-3 sm:p-4 min-w-0 w-full max-w-full overflow-x-hidden">
         <div className="min-w-0">
-          <label className="text-xs uppercase tracking-[0.2em] text-[var(--muted)]">Ricerca</label>
+          <div className="flex flex-wrap items-center justify-between gap-3">
+            <div className="relative flex h-10 w-full max-w-[360px] rounded-md border border-[var(--border)] bg-[var(--surface-strong)] p-1">
+              <span
+                aria-hidden="true"
+                className={`pointer-events-none absolute left-1 top-1 h-[calc(100%-8px)] w-[calc(50%-4px)] rounded-md bg-emerald-500/20 transition-transform duration-200 ${
+                  giacenzeScope === "complessivo" ? "translate-x-0" : "translate-x-full"
+                }`}
+              />
+              <button
+                type="button"
+                onClick={() => setGiacenzeScope("complessivo")}
+                className={`relative z-[1] h-full flex-1 rounded-md text-[11px] font-semibold uppercase tracking-[0.16em] transition ${
+                  giacenzeScope === "complessivo" ? "text-emerald-300" : "text-[var(--muted)]"
+                }`}
+              >
+                Complessivo
+              </button>
+              <button
+                type="button"
+                onClick={() => setGiacenzeScope("annuale")}
+                className={`relative z-[1] h-full flex-1 rounded-md text-[11px] font-semibold uppercase tracking-[0.16em] transition ${
+                  giacenzeScope === "annuale" ? "text-emerald-300" : "text-[var(--muted)]"
+                }`}
+              >
+                Per anno
+              </button>
+            </div>
+
+            {giacenzeScope === "annuale" ? (
+              <label className="flex items-center gap-2 text-xs text-[var(--muted)]">
+                <span>Anno di riferimento</span>
+                <select
+                  value={referenceYear}
+                  onChange={(event) => setReferenceYear(parseInt(event.target.value, 10))}
+                  className="h-9 w-28 rounded-md border border-[var(--border)] bg-[var(--surface)] px-2 text-xs text-[var(--page-fg)]"
+                >
+                  {YEAR_SCOPE_OPTIONS.map((year) => (
+                    <option key={year} value={year}>
+                      {year}
+                    </option>
+                  ))}
+                </select>
+              </label>
+            ) : null}
+          </div>
+
           <div className="mt-2 flex min-w-0 flex-wrap items-center gap-3">
             <div className="min-w-0 flex-1">
               <div className="flex items-center rounded-md border border-[var(--border)] bg-[var(--surface)] px-3 py-2">
@@ -1670,6 +1995,273 @@ export default function WarehouseGiacenze() {
           </button>
       </ContextMenu>
 
+      {exportModalOpen ? (
+        <div className="fixed inset-0 z-[62] flex items-center justify-center bg-black/70 px-3 py-4" onMouseDown={() => setExportModalOpen(false)}>
+          <div
+            className="w-full max-w-lg rounded-xl border border-[var(--border)] bg-[var(--surface)] shadow-xl"
+            onMouseDown={(event) => event.stopPropagation()}
+          >
+            <div className="flex items-start justify-between gap-4 border-b border-[var(--border)] px-4 py-3">
+              <div>
+                <p className="text-xs uppercase tracking-[0.2em] text-[var(--muted)]">Esportazione</p>
+                <h2 className="mt-1 text-lg font-semibold">Scarica dati giacenze</h2>
+              </div>
+              <button
+                type="button"
+                className="flex h-9 w-9 items-center justify-center rounded-md border border-[var(--border)] text-[var(--muted)] hover:bg-[var(--hover)]"
+                onClick={() => setExportModalOpen(false)}
+                aria-label="Chiudi export"
+              >
+                <i className="fa-solid fa-xmark" aria-hidden="true" />
+              </button>
+            </div>
+
+            <div className="space-y-4 px-4 py-4">
+              <label className="block text-sm">
+                <span className="text-xs uppercase tracking-[0.2em] text-[var(--muted)]">File type</span>
+                <select
+                  value={exportFileType}
+                  onChange={(event) => setExportFileType(event.target.value)}
+                  className="mt-2 h-10 w-full rounded-md border border-[var(--border)] bg-[var(--surface)] px-3 text-sm"
+                >
+                  <option value="pdf">📕 PDF</option>
+                  <option value="csv">📗 CSV</option>
+                  <option value="xlsx">📘 XLSX</option>
+                </select>
+              </label>
+
+              <label className="block text-sm">
+                <span className="text-xs uppercase tracking-[0.2em] text-[var(--muted)]">Pagine</span>
+                <select
+                  value={exportPageMode}
+                  onChange={(event) => {
+                    const mode = String(event.target.value || "current");
+                    setExportPageMode(mode);
+                    if (mode === "current") {
+                      setExportSelectedPages(new Set([page]));
+                    }
+                  }}
+                  className="mt-2 h-10 w-full rounded-md border border-[var(--border)] bg-[var(--surface)] px-3 text-sm"
+                >
+                  <option value="current">pagina corrente</option>
+                  <option value="selected">seleziona pagine</option>
+                  <option value="all">tutte le pagine</option>
+                </select>
+              </label>
+
+              {exportPageMode === "selected" ? (
+                <div className="rounded-md border border-[var(--border)]">
+                  <div className="max-h-52 overflow-auto">
+                    <table className="table-dense w-full text-xs">
+                      <thead className="sticky top-0 bg-[var(--surface-strong)] text-[10px] uppercase tracking-[0.16em] text-[var(--muted)]">
+                        <tr className="text-left">
+                          <th className="px-3 py-2">Sel</th>
+                          <th className="px-3 py-2">Pagina</th>
+                          <th className="px-3 py-2">Elementi</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {exportPageRows.map((row) => (
+                          <tr key={`export-page-${row.pageNumber}`} className="border-t border-[var(--border)]">
+                            <td className="px-3 py-2">
+                              <input
+                                type="checkbox"
+                                checked={exportSelectedPages.has(row.pageNumber)}
+                                onChange={() => toggleExportSelectedPage(row.pageNumber)}
+                                className="h-4 w-4"
+                              />
+                            </td>
+                            <td className="px-3 py-2">{row.pageNumber}</td>
+                            <td className="px-3 py-2">{formatNumber(row.itemsCount)}</td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                </div>
+              ) : null}
+            </div>
+
+            <div className="flex items-center justify-end gap-2 border-t border-[var(--border)] px-4 py-3">
+              <button
+                type="button"
+                className="rounded-md border border-[var(--border)] px-4 py-2 text-sm"
+                onClick={() => setExportModalOpen(false)}
+                disabled={exportLoading}
+              >
+                Chiudi
+              </button>
+              <button
+                type="button"
+                className="rounded-md bg-emerald-500 px-4 py-2 text-sm font-semibold text-white hover:bg-emerald-600 disabled:cursor-not-allowed disabled:opacity-60"
+                onClick={handleExportDownload}
+                disabled={exportLoading}
+              >
+                {exportLoading ? "Esportazione..." : "Scarica"}
+              </button>
+            </div>
+            {exportError ? <p className="px-4 pb-3 text-sm text-rose-400">{exportError}</p> : null}
+          </div>
+        </div>
+      ) : null}
+
+      {mapWizardOpen ? (
+        <div className="fixed inset-0 z-[63] flex items-center justify-center bg-black/75 px-3 py-3" onMouseDown={() => setMapWizardOpen(false)}>
+          <div
+            className="flex h-[92dvh] w-[96vw] max-w-[1600px] min-h-0 flex-col overflow-hidden rounded-xl border border-[var(--border)] bg-[var(--surface)] shadow-2xl"
+            onMouseDown={(event) => event.stopPropagation()}
+          >
+            <div className="flex items-start justify-between gap-4 border-b border-[var(--border)] px-4 py-3">
+              <div>
+                <p className="text-xs uppercase tracking-[0.2em] text-[var(--muted)]">Pianta magazzino</p>
+                <h2 className="mt-1 text-lg font-semibold">Wizard creazione scaffalatura</h2>
+              </div>
+              <button
+                type="button"
+                className="flex h-9 w-9 items-center justify-center rounded-md border border-[var(--border)] text-[var(--muted)] hover:bg-[var(--hover)]"
+                onClick={() => setMapWizardOpen(false)}
+              >
+                <i className="fa-solid fa-xmark" aria-hidden="true" />
+              </button>
+            </div>
+
+            <div className="grid min-h-0 flex-1 grid-cols-[300px_1fr] gap-3 p-3">
+              <aside className="flex min-h-0 flex-col gap-3 rounded-lg border border-[var(--border)] bg-[var(--surface-strong)] p-3">
+                <div className="flex gap-2">
+                  <button type="button" onClick={addMapBlock} className="flex-1 rounded-md border border-[var(--border)] px-3 py-2 text-sm hover:bg-[var(--hover)]">
+                    + Scaffale
+                  </button>
+                  <button
+                    type="button"
+                    onClick={removeSelectedMapBlock}
+                    className="rounded-md border border-[var(--border)] px-3 py-2 text-sm text-rose-300 hover:bg-rose-500/10"
+                  >
+                    Elimina
+                  </button>
+                </div>
+
+                <div className="min-h-0 flex-1 overflow-auto rounded-md border border-[var(--border)]">
+                  <table className="table-dense w-full text-xs">
+                    <thead className="sticky top-0 bg-[var(--surface)] text-[10px] uppercase tracking-[0.16em] text-[var(--muted)]">
+                      <tr className="text-left">
+                        <th className="px-3 py-2">ID</th>
+                        <th className="px-3 py-2">Nome</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {mapBlocks.map((row) => (
+                        <tr
+                          key={`map-row-${row.id}`}
+                          className={`cursor-pointer border-t border-[var(--border)] ${selectedMapBlockId === row.id ? "bg-emerald-500/15" : ""}`}
+                          onClick={() => setSelectedMapBlockId(row.id)}
+                        >
+                          <td className="px-3 py-2 font-semibold">{row.id}</td>
+                          <td className="px-3 py-2">{row.label}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+
+                {selectedMapBlock ? (
+                  <div className="space-y-2 rounded-md border border-[var(--border)] p-3 text-sm">
+                    <label className="block">
+                      <span className="text-xs text-[var(--muted)]">Nome</span>
+                      <input
+                        type="text"
+                        value={selectedMapBlock.label}
+                        onChange={(event) => updateSelectedMapBlock("label", event.target.value)}
+                        className="mt-1 h-9 w-full rounded-md border border-[var(--border)] bg-[var(--surface)] px-2 text-sm"
+                      />
+                    </label>
+                    <div className="grid grid-cols-2 gap-2">
+                      <label className="block">
+                        <span className="text-xs text-[var(--muted)]">Larghezza</span>
+                        <input
+                          type="number"
+                          value={selectedMapBlock.w}
+                          onChange={(event) => updateSelectedMapBlock("w", event.target.value)}
+                          className="mt-1 h-9 w-full rounded-md border border-[var(--border)] bg-[var(--surface)] px-2 text-sm"
+                        />
+                      </label>
+                      <label className="block">
+                        <span className="text-xs text-[var(--muted)]">Altezza</span>
+                        <input
+                          type="number"
+                          value={selectedMapBlock.h}
+                          onChange={(event) => updateSelectedMapBlock("h", event.target.value)}
+                          className="mt-1 h-9 w-full rounded-md border border-[var(--border)] bg-[var(--surface)] px-2 text-sm"
+                        />
+                      </label>
+                    </div>
+                    <label className="block">
+                      <span className="text-xs text-[var(--muted)]">Colore</span>
+                      <input
+                        type="color"
+                        value={selectedMapBlock.color}
+                        onChange={(event) => updateSelectedMapBlock("color", event.target.value)}
+                        className="mt-1 h-9 w-full rounded-md border border-[var(--border)] bg-[var(--surface)] px-1"
+                      />
+                    </label>
+                  </div>
+                ) : null}
+              </aside>
+
+              <section className="relative min-h-0 rounded-lg border border-[var(--border)] bg-[var(--surface)] p-3">
+                <div className="h-full w-full overflow-auto rounded-md border border-[var(--border)] bg-[linear-gradient(rgba(255,255,255,0.03)_1px,transparent_1px),linear-gradient(90deg,rgba(255,255,255,0.03)_1px,transparent_1px)] [background-size:24px_24px]">
+                  <div className="relative min-h-[780px] min-w-[1200px]">
+                    {mapBlocks.map((row) => (
+                      <button
+                        key={`map-block-${row.id}`}
+                        type="button"
+                        onMouseDown={(event) => {
+                          const rect = event.currentTarget.getBoundingClientRect();
+                          mapDragRef.current = {
+                            id: row.id,
+                            offsetX: event.clientX - rect.left,
+                            offsetY: event.clientY - rect.top
+                          };
+                          setSelectedMapBlockId(row.id);
+                        }}
+                        className={`absolute flex items-center justify-center rounded border text-sm font-semibold text-slate-900 shadow ${
+                          selectedMapBlockId === row.id ? "ring-2 ring-emerald-400" : ""
+                        }`}
+                        style={{
+                          left: `${row.x}px`,
+                          top: `${row.y}px`,
+                          width: `${row.w}px`,
+                          height: `${row.h}px`,
+                          backgroundColor: row.color
+                        }}
+                      >
+                        {row.label}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              </section>
+            </div>
+
+            <div className="flex items-center justify-end gap-2 border-t border-[var(--border)] px-4 py-3">
+              <button type="button" className="rounded-md border border-[var(--border)] px-4 py-2 text-sm" onClick={() => setMapWizardOpen(false)}>
+                Chiudi
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  const timestamp = new Date().toISOString().replace(/[:.]/g, "-");
+                  const payload = JSON.stringify({ blocks: mapBlocks }, null, 2);
+                  downloadBlob(new Blob([payload], { type: "application/json;charset=utf-8;" }), `magazzino-layout-${timestamp}.json`);
+                }}
+                className="rounded-md bg-emerald-500 px-4 py-2 text-sm font-semibold text-white hover:bg-emerald-600"
+              >
+                Esporta layout
+              </button>
+            </div>
+          </div>
+        </div>
+      ) : null}
+
       {movementsModalOpen ? (
         <div
           className="fixed inset-0 z-[61] flex items-center justify-center bg-black/70 px-3 py-3 sm:px-4 sm:py-6"
@@ -1915,7 +2507,25 @@ export default function WarehouseGiacenze() {
                   </thead>
                   <tbody>
                     {movementsRows.map((row) => (
-                      <tr key={row.codMovimento} className="border-t border-[var(--border)]">
+                      <tr
+                        key={row.codMovimento}
+                        className={`border-t border-[var(--border)] ${
+                          movementsRowMenu.open && movementsRowMenu.row?.codMovimento === row.codMovimento
+                            ? "bg-emerald-500/20 shadow-[inset_3px_0_0_0_rgba(52,211,153,0.9)]"
+                            : ""
+                        }`}
+                        onContextMenu={(event) => {
+                          event.preventDefault();
+                          event.stopPropagation();
+                          setMovementsRowMenu({
+                            open: true,
+                            x: event.clientX,
+                            y: event.clientY,
+                            row,
+                            allocOpen: false
+                          });
+                        }}
+                      >
                         <td className="px-3 py-2 whitespace-nowrap overflow-hidden">
                           <span className="block truncate" title={formatDate(row.data)}>{formatDate(row.data)}</span>
                         </td>
@@ -1994,6 +2604,75 @@ export default function WarehouseGiacenze() {
           </div>
         </div>
       ) : null}
+
+      <ContextMenu
+        open={movementsRowMenu.open}
+        x={movementsRowMenu.x}
+        y={movementsRowMenu.y}
+        className="z-[70] w-64 rounded-lg border border-[var(--border)] bg-[var(--surface)] p-2 shadow-lg"
+      >
+        <button
+          type="button"
+          onClick={closeMovementsContextMenu}
+          className="flex w-full items-center gap-2 rounded-md px-3 py-2 text-sm hover:bg-[var(--hover)]"
+        >
+          <i className="fa-solid fa-pen-to-square text-[12px] text-[var(--muted)]" aria-hidden="true" />
+          Modifica
+        </button>
+        <button
+          type="button"
+          onClick={() => {
+            if (!movementsRowMenu.row?.hasAllegato) return;
+            closeMovementsContextMenu();
+          }}
+          disabled={!movementsRowMenu.row?.hasAllegato}
+          className="flex w-full items-center gap-2 rounded-md px-3 py-2 text-sm hover:bg-[var(--hover)] disabled:cursor-not-allowed disabled:opacity-40"
+        >
+          <i className="fa-solid fa-print text-[12px] text-[var(--muted)]" aria-hidden="true" />
+          Stampa allegato
+        </button>
+        <button
+          type="button"
+          onClick={closeMovementsContextMenu}
+          className="flex w-full items-center gap-2 rounded-md px-3 py-2 text-sm hover:bg-[var(--hover)]"
+        >
+          <i className="fa-solid fa-paperclip text-[12px] text-[var(--muted)]" aria-hidden="true" />
+          Gestisci allegati
+        </button>
+        <div className="relative">
+          <button
+            type="button"
+            onClick={() => setMovementsRowMenu((prev) => ({ ...prev, allocOpen: !prev.allocOpen }))}
+            className="flex w-full items-center justify-between rounded-md px-3 py-2 text-sm hover:bg-[var(--hover)]"
+          >
+            <span className="flex items-center gap-2">
+              <i className="fa-solid fa-boxes-stacked text-[12px] text-[var(--muted)]" aria-hidden="true" />
+              Allocazione magazzino
+            </span>
+            <i className={`fa-solid fa-chevron-right text-[10px] text-[var(--muted)] ${movementsRowMenu.allocOpen ? "rotate-90" : ""}`} aria-hidden="true" />
+          </button>
+          {movementsRowMenu.allocOpen ? (
+            <div className="absolute left-[calc(100%+6px)] top-0 z-[71] w-56 rounded-lg border border-[var(--border)] bg-[var(--surface)] p-2 shadow-lg">
+              <button
+                type="button"
+                onClick={() => openAllocationMapPanel("manage")}
+                className="flex w-full items-center gap-2 rounded-md px-3 py-2 text-sm hover:bg-[var(--hover)]"
+              >
+                <i className="fa-solid fa-sliders text-[12px] text-[var(--muted)]" aria-hidden="true" />
+                Gestisci allocazione
+              </button>
+              <button
+                type="button"
+                onClick={() => openAllocationMapPanel("view")}
+                className="flex w-full items-center gap-2 rounded-md px-3 py-2 text-sm hover:bg-[var(--hover)]"
+              >
+                <i className="fa-solid fa-eye text-[12px] text-[var(--muted)]" aria-hidden="true" />
+                Vedi allocazione
+              </button>
+            </div>
+          ) : null}
+        </div>
+      </ContextMenu>
 
       {causaliOpen ? (
         <div

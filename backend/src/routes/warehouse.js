@@ -19,6 +19,51 @@ const parseBool = (value, fallback = false) => {
   }
   return fallback;
 };
+const toFiniteNumber = (value, fallback = 0) => {
+  const num = Number(value);
+  return Number.isFinite(num) ? num : fallback;
+};
+const clamp = (value, min, max) => Math.min(Math.max(value, min), max);
+const normalizeMapName = (value) => String(value || "").trim();
+const normalizeMapBlock = (block, index = 0) => {
+  const idRaw = String(block?.id || "").trim();
+  const labelRaw = String(block?.label || "").trim();
+  const colorRaw = String(block?.color || "").trim();
+  const kindRaw = String(block?.kind || "").trim().toLowerCase();
+  const shapeRaw = String(block?.shape || "").trim().toLowerCase();
+  const kind = ["shelf", "prop", "shape"].includes(kindRaw) ? kindRaw : "shelf";
+  const shape = ["rect", "circle"].includes(shapeRaw) ? shapeRaw : "rect";
+  const rotationRaw = Math.round(toFiniteNumber(block?.rotation, 0) / 90) * 90;
+  const defaultLabel = kind === "prop" ? "Prop" : kind === "shape" ? "Forma" : `B${index + 1}`;
+  const defaultColor = kind === "prop" ? "#38bdf8" : kind === "shape" ? "#f59e0b" : "#4ade80";
+  return {
+    id: idRaw || `B${index + 1}`,
+    kind,
+    shape,
+    label: labelRaw || idRaw || defaultLabel,
+    x: clamp(toFiniteNumber(block?.x, 0), -100000, 100000),
+    y: clamp(toFiniteNumber(block?.y, 0), -100000, 100000),
+    w: clamp(toFiniteNumber(block?.w, 120), 24, 4000),
+    h: clamp(toFiniteNumber(block?.h, 48), 24, 4000),
+    rotation: ((rotationRaw % 360) + 360) % 360,
+    color: /^#([0-9a-f]{3}|[0-9a-f]{6})$/i.test(colorRaw) ? colorRaw : defaultColor
+  };
+};
+const normalizeMapLayout = (layout) => {
+  const blocks = Array.isArray(layout?.blocks) ? layout.blocks.map((item, idx) => normalizeMapBlock(item, idx)) : [];
+  return {
+    width: clamp(toFiniteNumber(layout?.width, 1400), 320, 12000),
+    height: clamp(toFiniteNumber(layout?.height, 900), 240, 12000),
+    zoom: clamp(toFiniteNumber(layout?.zoom, 1), 0.2, 3),
+    blocks
+  };
+};
+const toDateOrNull = (value) => {
+  if (!value) return null;
+  const d = new Date(value);
+  if (Number.isNaN(d.getTime())) return null;
+  return d;
+};
 
 const SCAN_SESSION_TTL_MS = 10 * 60 * 1000;
 const scanSessions = new Map();
@@ -393,6 +438,10 @@ const ensureIndexes = async () => {
       { key: { cod_movimento: 1 } },
       { key: { cod_articolo: 1 } },
       { key: { cod_articolo: 1, Seriale: 1 } }
+    ]),
+    ensureCollectionIndexes(db, "warehouse_maps", [
+      { key: { name: 1 }, options: { unique: true } },
+      { key: { updatedAt: -1 } }
     ])
   ]).catch((error) => {
     ensureIndexesPromise = null;
@@ -417,6 +466,9 @@ router.get("/giacenze", async (req, res) => {
     const page = Math.max(parseInt(req.query.page || "1", 10), 1);
     const limit = Math.min(Math.max(parseInt(req.query.limit || "50", 10), 10), 5000);
     const onlyAlerts = String(req.query.alerts || "0") === "1";
+    const scope = String(req.query.scope || "complessivo").trim().toLowerCase();
+    const referenceYearRaw = parseInt(req.query.year || "", 10);
+    const referenceYear = Number.isFinite(referenceYearRaw) ? referenceYearRaw : new Date().getFullYear();
     const sortBy = String(req.query.sortBy || "codiceArticolo").trim();
     const sortDirRaw = String(req.query.sortDir || "asc").toLowerCase();
     const sortDir = sortDirRaw === "desc" ? -1 : 1;
@@ -450,6 +502,131 @@ router.get("/giacenze", async (req, res) => {
     const sortField = sortableFields.has(sortBy) ? sortBy : "codiceArticolo";
     const sort = sortField === "alert" ? { giacenzaFisica: sortDir, giacenzaMinima: sortDir } : { [sortField]: sortDir };
 
+    if (scope === "annuale") {
+      const escaped = search ? search.replace(/[.*+?^${}()|[\]\\]/g, "\\$&") : "";
+      const re = escaped ? new RegExp(escaped, "i") : null;
+      const movimentiAgg = await db
+        .collection("Movimenti di magazzino")
+        .aggregate(
+          [
+            {
+              $addFields: {
+                __yearMov: {
+                  $convert: {
+                    input: { $substrBytes: [{ $toString: "$Data" }, 0, 4] },
+                    to: "int",
+                    onError: null,
+                    onNull: null
+                  }
+                }
+              }
+            },
+            { $match: { __yearMov: { $ne: null, $lte: referenceYear } } },
+            {
+              $lookup: {
+                from: "Causali di magazzino",
+                localField: "Cod_Causale",
+                foreignField: "cod",
+                as: "causale"
+              }
+            },
+            { $unwind: { path: "$causale", preserveNullAndEmptyArrays: true } },
+            {
+              $project: {
+                codiceArticolo: { $trim: { input: "$Cod_Articolo" } },
+                qty: { $ifNull: ["$QT movimentata", 0] },
+                azFisica: { $ifNull: ["$causale.Azione su Giacenza Fisica", 0] },
+                azFiscale: { $ifNull: ["$causale.Azione su Giacenza Fiscale", 0] }
+              }
+            },
+            {
+              $group: {
+                _id: "$codiceArticolo",
+                giacenzaFisica: {
+                  $sum: { $multiply: ["$qty", "$azFisica"] }
+                },
+                giacenzaFiscale: {
+                  $sum: { $multiply: ["$qty", "$azFiscale"] }
+                }
+              }
+            }
+          ],
+          { allowDiskUse: true, maxTimeMS: 20000 }
+        )
+        .toArray();
+
+      const codesFromMovements = Array.from(
+        new Set(movimentiAgg.map((row) => normalizeWarehouseCode(row._id)).filter(Boolean))
+      );
+
+      const codiciRows =
+        codesFromMovements.length > 0
+          ? await db
+              .collection("Codici_di_magazzino")
+              .aggregate([
+                { $addFields: { codiceTrim: { $trim: { input: "$Codice Articolo" } } } },
+                { $match: { codiceTrim: { $in: codesFromMovements } } },
+                { $project: { _id: 0, codiceTrim: 1, doc: "$$ROOT" } }
+              ])
+              .toArray()
+          : [];
+
+      const movimentiMap = new Map(
+        movimentiAgg.map((row) => [normalizeWarehouseCode(row._id), { fisica: Number(row.giacenzaFisica || 0), fiscale: Number(row.giacenzaFiscale || 0) }])
+      );
+      const codiciMap = new Map(
+        codiciRows.map((row) => [normalizeWarehouseCode(row.codiceTrim), row.doc || {}])
+      );
+
+      let rows = codesFromMovements.map((codiceArticolo) => {
+        const agg = movimentiMap.get(codiceArticolo) || { fisica: 0, fiscale: 0 };
+        const row = codiciMap.get(codiceArticolo) || {};
+        return {
+          codiceArticolo,
+          descrizione: String(row.Descrizione || ""),
+          unitaMisura:
+            row["Unità di Misura"] ||
+            row["UnitÃƒÂ  di Misura"] ||
+            row["UnitÃ  di Misura"] ||
+            row["UnitÃ  di misura"] ||
+            "",
+          giacenzaMinima: Number(row["Giacenza Minina"] || 0),
+          alertGiacenza: row["Alert Giacenza"] === true,
+          obsoleto: row.Obsoleto === true,
+          giacenzaFisica: agg.fisica,
+          giacenzaFiscale: agg.fiscale
+        };
+      });
+
+      if (re) {
+        rows = rows.filter((row) => re.test(row.codiceArticolo || "") || re.test(row.descrizione || ""));
+      }
+
+      if (onlyAlerts) {
+        rows = rows.filter((row) => Number(row.giacenzaFisica || 0) < Number(row.giacenzaMinima || 0));
+      }
+
+      const compareValues = (a, b) => {
+        if (typeof a === "number" || typeof b === "number") {
+          return Number(a || 0) - Number(b || 0);
+        }
+        return String(a || "").localeCompare(String(b || ""), "it", { numeric: true, sensitivity: "base" });
+      };
+
+      rows.sort((a, b) => {
+        if (sortField === "alert") {
+          const first = compareValues(a.giacenzaFisica, b.giacenzaFisica);
+          if (first !== 0) return first * sortDir;
+          return compareValues(a.giacenzaMinima, b.giacenzaMinima) * sortDir;
+        }
+        return compareValues(a?.[sortField], b?.[sortField]) * sortDir;
+      });
+
+      const total = rows.length;
+      const data = rows.slice(skip, skip + limit);
+      return res.json({ page, limit, total, data, scope, year: referenceYear });
+    }
+
     const [data, total] = await Promise.all([
       db
         .collection("warehouse_giacenze")
@@ -461,7 +638,7 @@ router.get("/giacenze", async (req, res) => {
       db.collection("warehouse_giacenze").countDocuments(query)
     ]);
 
-    res.json({ page, limit, total, data });
+    res.json({ page, limit, total, data, scope: "complessivo", year: referenceYear });
   } catch (error) {
     res.status(500).json({ errore: "Errore caricamento giacenze", dettaglio: error.message });
   }
@@ -654,7 +831,10 @@ router.get("/movimenti", async (req, res) => {
       movementCodes.length
         ? db
             .collection("Allocazione Magazzino")
-            .find({ cod_movimento: { $in: movementCodes } }, { projection: { _id: 0, cod_movimento: 1, Seriale: 1 } })
+            .find(
+              { cod_movimento: { $in: movementCodes } },
+              { projection: { _id: 0, cod_movimento: 1, Seriale: 1, Scaffale: 1, Riga: 1, Colonna: 1, Note: 1 } }
+            )
             .toArray()
         : [],
       db
@@ -667,18 +847,30 @@ router.get("/movimenti", async (req, res) => {
     const articoliMap = new Map(articoli.map((row) => [normalizeWarehouseCode(row["Codice Articolo"]), String(row.Descrizione || "")]));
     const depositiMap = new Map(depositi.map((row) => [Number(row.Cod), String(row.Descrizione || "")]));
     const serialiMap = new Map();
+    const allocInfoMap = new Map();
     for (const row of allocazioni) {
       const movCode = Number(row.cod_movimento);
       const seriale = normalizeSerial(row.Seriale);
-      if (!Number.isFinite(movCode) || !seriale) continue;
-      const current = serialiMap.get(movCode) || [];
-      if (!current.includes(seriale)) current.push(seriale);
-      serialiMap.set(movCode, current);
+      if (!Number.isFinite(movCode)) continue;
+      if (seriale) {
+        const current = serialiMap.get(movCode) || [];
+        if (!current.includes(seriale)) current.push(seriale);
+        serialiMap.set(movCode, current);
+      }
+      if (!allocInfoMap.has(movCode)) {
+        allocInfoMap.set(movCode, {
+          scaffale: String(row.Scaffale || "").trim(),
+          riga: String(row.Riga || "").trim(),
+          colonna: String(row.Colonna || "").trim(),
+          noteAllocazione: String(row.Note || "").trim()
+        });
+      }
     }
 
     const data = rows.map((row) => {
       const movCode = Number(row.cod);
       const seriali = serialiMap.get(movCode) || [];
+      const allocInfo = allocInfoMap.get(movCode) || {};
       const causaleRow = causaliMap.get(Number(row.Cod_Causale)) || null;
       const depInizialeCod = Number(causaleRow?.["Deposito Iniziale"]);
       const depFinaleCod = Number(causaleRow?.["Deposito Finale"]);
@@ -692,6 +884,9 @@ router.get("/movimenti", async (req, res) => {
         codMovimento: movCode,
         data: row.Data || null,
         codDdt: Number(row.Cod_DDT || 0) || 0,
+        codAllegato: Number(row.Cod_Allegato || 0) || 0,
+        codAllegatoFoto: Number(row.Cod_Allegato_Foto || 0) || 0,
+        hasAllegato: Number(row.Cod_Allegato || 0) > 0 || Number(row.Cod_Allegato_Foto || 0) > 0,
         codiceArticolo: normalizeWarehouseCode(row.Cod_Articolo),
         descrizioneArticolo:
           articoliMap.get(normalizeWarehouseCode(row.Cod_Articolo)) || String(row.Descrizione || "").trim(),
@@ -699,6 +894,9 @@ router.get("/movimenti", async (req, res) => {
         quantita: Number(row["QT movimentata"] || 0),
         unitaMisura: String(unita || "").trim(),
         seriale: seriali.join(", "),
+        scaffale: String(allocInfo.scaffale || ""),
+        riga: String(allocInfo.riga || ""),
+        colonna: String(allocInfo.colonna || ""),
         nominativo: String(row.Riferimento || ""),
         costoAcquisto: Number(row["Costo di Acquisto"] || 0),
         prezzoVendita: Number(row["Prezzo di Vendita"] || 0),
@@ -707,6 +905,7 @@ router.get("/movimenti", async (req, res) => {
         varFisica: Number(causaleRow?.["Azione su Giacenza Fisica"] || 0),
         varFiscale: Number(causaleRow?.["Azione su Giacenza Fiscale"] || 0),
         note: String(row.Note || ""),
+        noteAllocazione: String(allocInfo.noteAllocazione || ""),
         partNumber: String(row["Part Number"] || "")
       };
     });
@@ -714,6 +913,124 @@ router.get("/movimenti", async (req, res) => {
     return res.json({ page, limit, total, data });
   } catch (error) {
     return res.status(500).json({ errore: "Errore caricamento movimenti", dettaglio: error.message });
+  }
+});
+
+router.get("/movimenti/:cod/allocazione", async (req, res) => {
+  try {
+    ensureIndexesInBackground();
+    const db = getWarehouseDb();
+    const codMov = Number(req.params.cod);
+    if (!Number.isFinite(codMov)) {
+      return res.status(400).json({ errore: "Codice movimento non valido" });
+    }
+    const row = await db
+      .collection("Allocazione Magazzino")
+      .findOne(
+        { cod_movimento: codMov },
+        { projection: { _id: 0, cod_movimento: 1, cod_articolo: 1, Seriale: 1, Scaffale: 1, Riga: 1, Colonna: 1, Note: 1, cod: 1 } }
+      );
+    if (!row) {
+      return res.json({
+        allocazione: {
+          codMovimento: codMov,
+          codiceArticolo: "",
+          seriale: "",
+          scaffale: "",
+          riga: "",
+          colonna: "",
+          note: ""
+        }
+      });
+    }
+    return res.json({
+      allocazione: {
+        codMovimento: codMov,
+        codiceArticolo: String(row.cod_articolo || "").trim(),
+        seriale: String(row.Seriale || "").trim(),
+        scaffale: String(row.Scaffale || "").trim(),
+        riga: String(row.Riga || "").trim(),
+        colonna: String(row.Colonna || "").trim(),
+        note: String(row.Note || "").trim()
+      }
+    });
+  } catch (error) {
+    return res.status(500).json({ errore: "Errore caricamento allocazione", dettaglio: error.message });
+  }
+});
+
+router.put("/movimenti/:cod/allocazione", async (req, res) => {
+  try {
+    ensureIndexesInBackground();
+    const db = getWarehouseDb();
+    const codMov = Number(req.params.cod);
+    if (!Number.isFinite(codMov)) {
+      return res.status(400).json({ errore: "Codice movimento non valido" });
+    }
+    const scaffale = String(req.body?.scaffale || "").trim();
+    const riga = String(req.body?.riga || "").trim();
+    const colonna = String(req.body?.colonna || "").trim();
+    const note = String(req.body?.note || "").trim();
+    const seriale = normalizeSerial(req.body?.seriale || "");
+    const codiceArticolo = normalizeWarehouseCode(req.body?.codiceArticolo || "");
+
+    if (!scaffale) {
+      return res.status(400).json({ errore: "Scaffale obbligatorio" });
+    }
+
+    const existing = await db
+      .collection("Allocazione Magazzino")
+      .findOne({ cod_movimento: codMov }, { projection: { _id: 1, cod: 1 } });
+
+    if (existing?._id) {
+      await db.collection("Allocazione Magazzino").updateOne(
+        { _id: existing._id },
+        {
+          $set: {
+            Scaffale: scaffale,
+            Riga: riga,
+            Colonna: colonna,
+            Note: note,
+            ...(seriale ? { Seriale: seriale } : {}),
+            ...(codiceArticolo ? { cod_articolo: codiceArticolo } : {})
+          }
+        }
+      );
+    } else {
+      const lastAlloc = await db
+        .collection("Allocazione Magazzino")
+        .find({}, { projection: { cod: 1 } })
+        .sort({ cod: -1 })
+        .limit(1)
+        .toArray();
+      const nextCod = Number(lastAlloc?.[0]?.cod || 0) + 1;
+      await db.collection("Allocazione Magazzino").insertOne({
+        cod_movimento: codMov,
+        cod_articolo: codiceArticolo || null,
+        Seriale: seriale || null,
+        Scaffale: scaffale,
+        Riga: riga,
+        Colonna: colonna,
+        Note: note,
+        cod: nextCod,
+        Deposito: null
+      });
+    }
+
+    return res.json({
+      ok: true,
+      allocazione: {
+        codMovimento: codMov,
+        codiceArticolo,
+        seriale,
+        scaffale,
+        riga,
+        colonna,
+        note
+      }
+    });
+  } catch (error) {
+    return res.status(500).json({ errore: "Errore aggiornamento allocazione", dettaglio: error.message });
   }
 });
 
@@ -1069,6 +1386,7 @@ router.post("/articoli", async (req, res) => {
     };
 
     await db.collection("Codici_di_magazzino").insertOne(doc);
+    await refreshWarehouseCacheByCodes(db, [codiceArticolo]);
 
     res.status(201).json({
       ok: true,
@@ -1222,6 +1540,218 @@ router.post("/carico", async (req, res) => {
     res.json({ ok: true, inserted: docs.length, allocazioni: allocazioni.length });
   } catch (error) {
     res.status(500).json({ errore: "Errore salvataggio carico", dettaglio: error.message });
+  }
+});
+
+router.get("/maps", async (req, res) => {
+  try {
+    ensureIndexesInBackground();
+    const db = getWarehouseDb();
+    const search = String(req.query.search || "").trim();
+    const page = Math.max(parseInt(req.query.page || "1", 10), 1);
+    const limit = Math.min(Math.max(parseInt(req.query.limit || "50", 10), 1), 500);
+    const skip = (page - 1) * limit;
+    const query = {};
+    if (search) {
+      const re = new RegExp(search.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"), "i");
+      query.name = re;
+    }
+    const [rows, total] = await Promise.all([
+      db
+        .collection("warehouse_maps")
+        .find(
+          query,
+          {
+            projection: {
+              _id: 1,
+              name: 1,
+              address: 1,
+              notes: 1,
+              lastUpdatedAt: 1,
+              layout: 1,
+              createdAt: 1,
+              updatedAt: 1
+            }
+          }
+        )
+        .sort({ updatedAt: -1, name: 1 })
+        .skip(skip)
+        .limit(limit)
+        .toArray(),
+      db.collection("warehouse_maps").countDocuments(query)
+    ]);
+    const data = rows.map((row) => ({
+      id: String(row._id),
+      name: String(row.name || ""),
+      address: String(row.address || ""),
+      notes: String(row.notes || ""),
+      lastUpdatedAt: row.lastUpdatedAt || null,
+      blocksCount: Array.isArray(row?.layout?.blocks) ? row.layout.blocks.length : 0,
+      createdAt: row.createdAt || null,
+      updatedAt: row.updatedAt || null
+    }));
+    return res.json({ page, limit, total, data });
+  } catch (error) {
+    return res.status(500).json({ errore: "Errore caricamento magazzini", dettaglio: error.message });
+  }
+});
+
+router.post("/maps", async (req, res) => {
+  try {
+    ensureIndexesInBackground();
+    const db = getWarehouseDb();
+    const name = normalizeMapName(req.body?.name);
+    const address = String(req.body?.address || "").trim();
+    const notes = String(req.body?.notes || "").trim();
+    if (!name) {
+      return res.status(400).json({ errore: "Nome magazzino obbligatorio" });
+    }
+    const now = new Date();
+    const lastUpdatedAt = toDateOrNull(req.body?.lastUpdatedAt) || now;
+    const layout = normalizeMapLayout(req.body?.layout || {});
+    const doc = {
+      name,
+      address,
+      notes,
+      lastUpdatedAt,
+      layout,
+      createdAt: now,
+      updatedAt: now
+    };
+    const result = await db.collection("warehouse_maps").insertOne(doc);
+    return res.status(201).json({
+      ok: true,
+      warehouse: {
+        id: String(result.insertedId),
+        name,
+        address,
+        notes,
+        lastUpdatedAt,
+        layout,
+        createdAt: now,
+        updatedAt: now
+      }
+    });
+  } catch (error) {
+    if (error?.code === 11000) {
+      return res.status(409).json({ errore: "Esiste gia un magazzino con questo nome" });
+    }
+    return res.status(500).json({ errore: "Errore creazione magazzino", dettaglio: error.message });
+  }
+});
+
+router.get("/maps/:id", async (req, res) => {
+  try {
+    ensureIndexesInBackground();
+    const db = getWarehouseDb();
+    const id = String(req.params.id || "").trim();
+    if (!mongoose.Types.ObjectId.isValid(id)) {
+      return res.status(400).json({ errore: "ID magazzino non valido" });
+    }
+    const row = await db
+      .collection("warehouse_maps")
+      .findOne(
+        { _id: new mongoose.Types.ObjectId(id) },
+        {
+          projection: {
+            _id: 1,
+            name: 1,
+            address: 1,
+            notes: 1,
+            lastUpdatedAt: 1,
+            layout: 1,
+            createdAt: 1,
+            updatedAt: 1
+          }
+        }
+      );
+    if (!row) {
+      return res.status(404).json({ errore: "Magazzino non trovato" });
+    }
+    return res.json({
+      warehouse: {
+        id: String(row._id),
+        name: String(row.name || ""),
+        address: String(row.address || ""),
+        notes: String(row.notes || ""),
+        lastUpdatedAt: row.lastUpdatedAt || null,
+        layout: normalizeMapLayout(row.layout || {}),
+        createdAt: row.createdAt || null,
+        updatedAt: row.updatedAt || null
+      }
+    });
+  } catch (error) {
+    return res.status(500).json({ errore: "Errore caricamento magazzino", dettaglio: error.message });
+  }
+});
+
+router.put("/maps/:id", async (req, res) => {
+  try {
+    ensureIndexesInBackground();
+    const db = getWarehouseDb();
+    const id = String(req.params.id || "").trim();
+    if (!mongoose.Types.ObjectId.isValid(id)) {
+      return res.status(400).json({ errore: "ID magazzino non valido" });
+    }
+    const set = { updatedAt: new Date() };
+    if (req.body && Object.prototype.hasOwnProperty.call(req.body, "name")) {
+      const name = normalizeMapName(req.body?.name);
+      if (!name) return res.status(400).json({ errore: "Nome magazzino obbligatorio" });
+      set.name = name;
+    }
+    if (req.body && Object.prototype.hasOwnProperty.call(req.body, "address")) {
+      set.address = String(req.body?.address || "").trim();
+    }
+    if (req.body && Object.prototype.hasOwnProperty.call(req.body, "notes")) {
+      set.notes = String(req.body?.notes || "").trim();
+    }
+    if (req.body && Object.prototype.hasOwnProperty.call(req.body, "lastUpdatedAt")) {
+      const parsed = toDateOrNull(req.body?.lastUpdatedAt);
+      set.lastUpdatedAt = parsed || new Date();
+    }
+    if (req.body && Object.prototype.hasOwnProperty.call(req.body, "layout")) {
+      set.layout = normalizeMapLayout(req.body?.layout || {});
+    }
+    const filter = { _id: new mongoose.Types.ObjectId(id) };
+    const result = await db.collection("warehouse_maps").findOneAndUpdate(
+      filter,
+      { $set: set },
+      {
+        returnDocument: "after",
+        projection: {
+          _id: 1,
+          name: 1,
+          address: 1,
+          notes: 1,
+          lastUpdatedAt: 1,
+          layout: 1,
+          createdAt: 1,
+          updatedAt: 1
+        }
+      }
+    );
+    const row = result?.value || result;
+    if (!row) {
+      return res.status(404).json({ errore: "Magazzino non trovato" });
+    }
+    return res.json({
+      ok: true,
+      warehouse: {
+        id: String(row._id),
+        name: String(row.name || ""),
+        address: String(row.address || ""),
+        notes: String(row.notes || ""),
+        lastUpdatedAt: row.lastUpdatedAt || null,
+        layout: normalizeMapLayout(row.layout || {}),
+        createdAt: row.createdAt || null,
+        updatedAt: row.updatedAt || null
+      }
+    });
+  } catch (error) {
+    if (error?.code === 11000) {
+      return res.status(409).json({ errore: "Esiste gia un magazzino con questo nome" });
+    }
+    return res.status(500).json({ errore: "Errore aggiornamento magazzino", dettaglio: error.message });
   }
 });
 

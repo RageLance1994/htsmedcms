@@ -24,6 +24,7 @@ export const APP_SECTIONS = [
     icon: "fa-warehouse",
     items: [
       "Giacenze",
+      "Piantina Magazzino",
       "DDT-Doc. di Trasporto",
       "Codici di Magazzino",
       "Causali/Depositi",
@@ -66,6 +67,7 @@ export const APP_SECTIONS = [
 
 const APP_NAV_ROUTES = {
   Giacenze: "/warehouse/giacenze",
+  "Piantina Magazzino": "/warehouse/mappe",
   "DDT-Doc. di Trasporto": "/warehouse/ddt"
 };
 
