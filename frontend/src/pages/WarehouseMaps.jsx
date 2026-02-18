@@ -135,6 +135,10 @@ export default function WarehouseMaps() {
   const resizeRef = useRef(null);
   const panRef = useRef(null);
   const canvasWrapRef = useRef(null);
+  const floaterDragRef = useRef(null);
+  const [snapEnabled, setSnapEnabled] = useState(true);
+  const [guideLines, setGuideLines] = useState({ x: null, y: null });
+  const [floaterPos, setFloaterPos] = useState({ x: 14, y: 14 });
 
   const [debouncedSearchUpdate, cancelDebouncedSearchUpdate] = useDebouncedCallback((next) => {
     setPage(1);
@@ -356,6 +360,61 @@ export default function WarehouseMaps() {
     };
   };
 
+  const applySnapForMove = useCallback((blockUid, rect, tolerance) => {
+    if (!snapEnabled) return { ...rect, guideX: null, guideY: null };
+    const others = layout.blocks.filter((b) => b.uid !== blockUid);
+    let bestX = { delta: Number.POSITIVE_INFINITY, value: null };
+    let bestY = { delta: Number.POSITIVE_INFINITY, value: null };
+    const myX = [rect.x, rect.x + rect.w / 2, rect.x + rect.w];
+    const myY = [rect.y, rect.y + rect.h / 2, rect.y + rect.h];
+    others.forEach((o) => {
+      const ox = [o.x, o.x + o.w / 2, o.x + o.w];
+      const oy = [o.y, o.y + o.h / 2, o.y + o.h];
+      myX.forEach((mx) =>
+        ox.forEach((x) => {
+          const d = Math.abs(mx - x);
+          if (d <= tolerance && d < bestX.delta) bestX = { delta: d, value: x, from: mx };
+        })
+      );
+      myY.forEach((my) =>
+        oy.forEach((y) => {
+          const d = Math.abs(my - y);
+          if (d <= tolerance && d < bestY.delta) bestY = { delta: d, value: y, from: my };
+        })
+      );
+    });
+    let nextX = rect.x;
+    let nextY = rect.y;
+    if (bestX.value !== null) nextX += bestX.value - bestX.from;
+    if (bestY.value !== null) nextY += bestY.value - bestY.from;
+    return { x: nextX, y: nextY, w: rect.w, h: rect.h, guideX: bestX.value, guideY: bestY.value };
+  }, [layout.blocks, snapEnabled]);
+
+  const duplicateSelected = () => {
+    if (!selectedBlock || isAllocationMode) return;
+    const nextNumber = getNextBlockNumber(selectedBlock.kind, layout.blocks);
+    const clone = {
+      ...selectedBlock,
+      uid: newUid(),
+      id:
+        selectedBlock.kind === "prop"
+          ? `P${nextNumber}`
+          : selectedBlock.kind === "shape"
+            ? `F${nextNumber}`
+            : `S${nextNumber}`,
+      label:
+        selectedBlock.kind === "prop"
+          ? `Prop ${nextNumber}`
+          : selectedBlock.kind === "shape"
+            ? `Forma ${nextNumber}`
+            : `Scaffale ${nextNumber}`,
+      x: Number(selectedBlock.x || 0) + 24,
+      y: Number(selectedBlock.y || 0) + 24
+    };
+    setLayout((prev) => ({ ...prev, blocks: [...prev.blocks, clone] }));
+    setSelectedBlockId(clone.uid);
+  };
+
   const rotateSelected = (step = 90) => {
     if (!selectedBlock || isAllocationMode) return;
     updateSelectedBlock({
@@ -407,10 +466,17 @@ export default function WarehouseMaps() {
         const state = dragRef.current;
         const dx = (event.clientX - state.startX) / state.zoom;
         const dy = (event.clientY - state.startY) / state.zoom;
+        const tolerance = 8 / Math.max(state.zoom, 0.25);
+        const snapped = applySnapForMove(
+          state.id,
+          { x: state.baseX + dx, y: state.baseY + dy, w: state.baseW || 0, h: state.baseH || 0 },
+          tolerance
+        );
         setLayout((prev) => ({
           ...prev,
-          blocks: prev.blocks.map((b) => (b.uid === state.id ? { ...b, x: Math.round(state.baseX + dx), y: Math.round(state.baseY + dy) } : b))
+          blocks: prev.blocks.map((b) => (b.uid === state.id ? { ...b, x: Math.round(snapped.x), y: Math.round(snapped.y) } : b))
         }));
+        setGuideLines({ x: snapped.guideX, y: snapped.guideY });
         return;
       }
       if (resizeRef.current && resizeRef.current.pointerId === event.pointerId) {
@@ -465,20 +531,51 @@ export default function WarehouseMaps() {
           nextH = minH;
         }
 
+        let rect = { x: nextX, y: nextY, w: nextW, h: nextH };
+        if (snapEnabled) {
+          const tolerance = 8 / Math.max(state.zoom, 0.25);
+          const snapped = applySnapForMove(state.id, rect, tolerance);
+          const dxSnap = snapped.x - rect.x;
+          const dySnap = snapped.y - rect.y;
+          const anchor = String(state.anchor || "");
+          if (anchor.includes("l")) {
+            rect = { ...rect, x: rect.x + dxSnap, w: Math.max(40, rect.w - dxSnap) };
+          } else if (anchor.includes("r")) {
+            rect = { ...rect, w: Math.max(40, rect.w + dxSnap) };
+          }
+          if (anchor.includes("t")) {
+            rect = { ...rect, y: rect.y + dySnap, h: Math.max(30, rect.h - dySnap) };
+          } else if (anchor.includes("b")) {
+            rect = { ...rect, h: Math.max(30, rect.h + dySnap) };
+          }
+          setGuideLines({ x: snapped.guideX, y: snapped.guideY });
+        } else {
+          setGuideLines({ x: null, y: null });
+        }
         setLayout((prev) => ({
           ...prev,
           blocks: prev.blocks.map((b) =>
             b.uid === state.id
-              ? { ...b, x: Math.round(nextX), y: Math.round(nextY), w: Math.round(nextW), h: Math.round(nextH) }
+              ? { ...b, x: Math.round(rect.x), y: Math.round(rect.y), w: Math.round(rect.w), h: Math.round(rect.h) }
               : b
           )
         }));
+        return;
+      }
+      if (floaterDragRef.current && floaterDragRef.current.pointerId === event.pointerId) {
+        const st = floaterDragRef.current;
+        setFloaterPos({
+          x: Math.max(8, st.baseX + (event.clientX - st.startX)),
+          y: Math.max(8, st.baseY + (event.clientY - st.startY))
+        });
       }
     };
     const onPointerUp = (event) => {
       if (panRef.current?.pointerId === event.pointerId) panRef.current = null;
       if (dragRef.current?.pointerId === event.pointerId) dragRef.current = null;
       if (resizeRef.current?.pointerId === event.pointerId) resizeRef.current = null;
+      if (floaterDragRef.current?.pointerId === event.pointerId) floaterDragRef.current = null;
+      setGuideLines({ x: null, y: null });
     };
     window.addEventListener("pointermove", onPointerMove);
     window.addEventListener("pointerup", onPointerUp);
@@ -486,13 +583,15 @@ export default function WarehouseMaps() {
       window.removeEventListener("pointermove", onPointerMove);
       window.removeEventListener("pointerup", onPointerUp);
     };
-  }, []);
+  }, [applySnapForMove, snapEnabled]);
 
   const startPan = (event) => {
     if (event.button !== 0 && event.button !== 1) return;
     const target = event.target;
     if (!(target instanceof HTMLElement) || !target.closest("[data-canvas-bg='1']")) return;
     event.preventDefault();
+    setSelectedBlockId("");
+    setGuideLines({ x: null, y: null });
     panRef.current = { pointerId: event.pointerId, startX: event.clientX, startY: event.clientY, baseX: viewport.x, baseY: viewport.y };
   };
 
@@ -631,11 +730,6 @@ export default function WarehouseMaps() {
                 {!isAllocationMode ? (
                   <>
                     <div className="mt-2 flex flex-wrap gap-2">
-                      <button type="button" className="rounded-md border border-[var(--border)] px-2 py-1 text-xs" onClick={() => addElement("shelf")}>+ Scaffale</button>
-                      <button type="button" className="rounded-md border border-[var(--border)] px-2 py-1 text-xs" onClick={() => addElement("prop")}>+ Prop</button>
-                      <button type="button" className="rounded-md border border-[var(--border)] px-2 py-1 text-xs" onClick={() => addElement("shape")}>+ Forma</button>
-                    </div>
-                    <div className="mt-2 flex flex-wrap gap-2">
                       <button type="button" className="rounded-md border border-[var(--border)] px-2 py-1 text-xs text-rose-400" onClick={() => selectedBlock && setLayout((prev) => { const next = prev.blocks.filter((b) => b.uid !== selectedBlock.uid); setSelectedBlockId(next[0]?.uid || ""); return { ...prev, blocks: next }; })} disabled={!selectedBlock}>Elimina selezionato</button>
                     </div>
                   </>
@@ -750,7 +844,7 @@ export default function WarehouseMaps() {
                           setSelectedBlockId(block.uid);
                           if (wizardMode === "manage" && block.kind === "shelf") setAllocation((prev) => ({ ...prev, scaffale: String(block.label || block.id || "") }));
                           if (isAllocationMode) return;
-                          dragRef.current = { pointerId: event.pointerId, id: block.uid, startX: event.clientX, startY: event.clientY, baseX: block.x, baseY: block.y, zoom: viewport.zoom };
+                          dragRef.current = { pointerId: event.pointerId, id: block.uid, startX: event.clientX, startY: event.clientY, baseX: block.x, baseY: block.y, baseW: block.w, baseH: block.h, zoom: viewport.zoom };
                         }}
                       >
                         <span className="pointer-events-none">{block.label || block.id}</span>
@@ -788,7 +882,64 @@ export default function WarehouseMaps() {
                       </button>
                     );
                   })}
+                  {guideLines.x !== null ? (
+                    <span
+                      className="pointer-events-none absolute top-0 z-20 h-full w-px bg-cyan-300/80"
+                      style={{ left: guideLines.x }}
+                    />
+                  ) : null}
+                  {guideLines.y !== null ? (
+                    <span
+                      className="pointer-events-none absolute left-0 z-20 h-px w-full bg-cyan-300/80"
+                      style={{ top: guideLines.y }}
+                    />
+                  ) : null}
                 </div>
+                {!isAllocationMode ? (
+                  <div
+                    className="absolute z-40 w-[244px] rounded-lg border border-[var(--border)] bg-[var(--surface)]/95 p-2 shadow-xl backdrop-blur"
+                    style={{ left: floaterPos.x, top: floaterPos.y }}
+                    onPointerDown={(event) => {
+                      event.stopPropagation();
+                    }}
+                  >
+                    <div
+                      className="mb-2 flex cursor-move items-center justify-between rounded-md border border-[var(--border)] bg-[var(--surface-strong)] px-2 py-1 text-[10px] uppercase tracking-[0.16em] text-[var(--muted)]"
+                      onPointerDown={(event) => {
+                        event.preventDefault();
+                        event.stopPropagation();
+                        floaterDragRef.current = {
+                          pointerId: event.pointerId,
+                          startX: event.clientX,
+                          startY: event.clientY,
+                          baseX: floaterPos.x,
+                          baseY: floaterPos.y
+                        };
+                      }}
+                    >
+                      <span>Strumenti</span>
+                      <i className="fa-solid fa-grip" aria-hidden="true" />
+                    </div>
+                    <div className="grid grid-cols-2 gap-2">
+                      <button type="button" className="h-8 rounded-md border border-[var(--border)] text-[11px] transition hover:bg-[var(--hover)]" onClick={() => addElement("shelf")} title="Nuovo scaffale">
+                        <i className="fa-solid fa-boxes-stacked mr-1" aria-hidden="true" />Scaffale
+                      </button>
+                      <button type="button" className="h-8 rounded-md border border-[var(--border)] text-[11px] transition hover:bg-[var(--hover)]" onClick={() => addElement("prop")} title="Nuovo prop">
+                        <i className="fa-solid fa-location-dot mr-1" aria-hidden="true" />Prop
+                      </button>
+                      <button type="button" className="h-8 rounded-md border border-[var(--border)] text-[11px] transition hover:bg-[var(--hover)]" onClick={() => addElement("shape")} title="Nuova forma">
+                        <i className="fa-regular fa-square mr-1" aria-hidden="true" />Forma
+                      </button>
+                      <button type="button" disabled={!selectedBlock} className="h-8 rounded-md border border-[var(--border)] text-[11px] transition hover:bg-[var(--hover)] disabled:opacity-45" onClick={duplicateSelected} title="Duplica elemento">
+                        <i className="fa-regular fa-clone mr-1" aria-hidden="true" />Duplica
+                      </button>
+                      <button type="button" className={`col-span-2 h-8 rounded-md border text-[11px] transition ${snapEnabled ? "border-cyan-300/70 text-cyan-200" : "border-[var(--border)] text-[var(--muted)]"} hover:bg-[var(--hover)]`} onClick={() => setSnapEnabled((v) => !v)} title="Snap/Magnete">
+                        <i className="fa-solid fa-magnet mr-1" aria-hidden="true" />
+                        {snapEnabled ? "Snap attivo" : "Snap disattivo"}
+                      </button>
+                    </div>
+                  </div>
+                ) : null}
                 <div className="pointer-events-none absolute bottom-3 left-3 rounded-md border border-[var(--border)] bg-black/60 px-2 py-1 text-[10px] text-[var(--muted)]">Zoom {Math.round(viewport.zoom * 100)}% - Pan: trascina lo sfondo</div>
               </div>
             </div>
