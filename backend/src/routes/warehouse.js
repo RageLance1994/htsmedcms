@@ -33,6 +33,8 @@ const normalizeMapBlock = (block, index = 0) => {
   const shapeRaw = String(block?.shape || "").trim().toLowerCase();
   const kind = ["shelf", "prop", "shape"].includes(kindRaw) ? kindRaw : "shelf";
   const shape = ["rect", "circle"].includes(shapeRaw) ? shapeRaw : "rect";
+  const rows = kind === "shelf" ? clamp(Math.floor(toFiniteNumber(block?.rows, 1)), 1, 200) : 1;
+  const cols = kind === "shelf" ? clamp(Math.floor(toFiniteNumber(block?.cols, 1)), 1, 200) : 1;
   const rotationRaw = Math.round(toFiniteNumber(block?.rotation, 0) / 90) * 90;
   const defaultLabel = kind === "prop" ? "Prop" : kind === "shape" ? "Forma" : `B${index + 1}`;
   const defaultColor = kind === "prop" ? "#38bdf8" : kind === "shape" ? "#f59e0b" : "#4ade80";
@@ -46,7 +48,9 @@ const normalizeMapBlock = (block, index = 0) => {
     w: clamp(toFiniteNumber(block?.w, 120), 24, 4000),
     h: clamp(toFiniteNumber(block?.h, 48), 24, 4000),
     rotation: ((rotationRaw % 360) + 360) % 360,
-    color: /^#([0-9a-f]{3}|[0-9a-f]{6})$/i.test(colorRaw) ? colorRaw : defaultColor
+    color: /^#([0-9a-f]{3}|[0-9a-f]{6})$/i.test(colorRaw) ? colorRaw : defaultColor,
+    rows,
+    cols
   };
 };
 const normalizeMapLayout = (layout) => {

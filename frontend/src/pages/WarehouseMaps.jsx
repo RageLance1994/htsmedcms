@@ -26,7 +26,7 @@ const makeBlock = (kind, n) => {
   const base = { x: 80 + n * 12, y: 80 + n * 12, w: 170, h: 62, rotation: 0, shape: "rect" };
   if (kind === "prop") return { ...base, uid: newUid(), id: `P${n}`, label: `Prop ${n}`, kind: "prop", color: "#38bdf8" };
   if (kind === "shape") return { ...base, uid: newUid(), id: `F${n}`, label: `Forma ${n}`, kind: "shape", color: "#f59e0b" };
-  return { ...base, uid: newUid(), id: `S${n}`, label: `Scaffale ${n}`, kind: "shelf", color: "#4ade80" };
+  return { ...base, uid: newUid(), id: `S${n}`, label: `Scaffale ${n}`, kind: "shelf", color: "#4ade80", rows: 1, cols: 1 };
 };
 
 const getNextBlockNumber = (kind, blocks) => {
@@ -80,7 +80,15 @@ const normalizeLayout = (layout) => {
       w: Math.max(24, Number(b?.w || 120)),
       h: Math.max(24, Number(b?.h || 48)),
       rotation: Number(b?.rotation || 0),
-      color: String(b?.color || "#4ade80")
+      color: String(b?.color || "#4ade80"),
+      rows:
+        ["shelf", "prop", "shape"].includes(String(b?.kind || "").toLowerCase()) && String(b?.kind || "").toLowerCase() === "shelf"
+          ? Math.max(1, parseInt(b?.rows, 10) || 1)
+          : 1,
+      cols:
+        ["shelf", "prop", "shape"].includes(String(b?.kind || "").toLowerCase()) && String(b?.kind || "").toLowerCase() === "shelf"
+          ? Math.max(1, parseInt(b?.cols, 10) || 1)
+          : 1
     }))
   };
 };
@@ -89,6 +97,7 @@ export default function WarehouseMaps() {
   const location = useLocation();
   const params = useMemo(() => new URLSearchParams(location.search), [location.search]);
   const action = String(params.get("action") || "").trim().toLowerCase();
+  const popupMode = String(params.get("popup") || "") === "1";
   const forcedMode = action === "gestisci-allocazione" ? "manage" : action === "visualizza-allocazione" ? "view" : "editor";
 
   const [search, setSearch] = useState("");
@@ -118,6 +127,9 @@ export default function WarehouseMaps() {
   const [layout, setLayout] = useState(DEFAULT_LAYOUT);
   const [selectedBlockId, setSelectedBlockId] = useState("");
   const [viewport, setViewport] = useState({ zoom: 1, x: 24, y: 24 });
+  const [shelf3dPreview, setShelf3dPreview] = useState({ open: false, blockUid: "" });
+  const [hoveredPreviewCell, setHoveredPreviewCell] = useState(null);
+  const [savedLayoutSignature, setSavedLayoutSignature] = useState("");
 
   const [allocation, setAllocation] = useState({
     movementCod: Number(params.get("movementCod") || 0) || 0,
@@ -151,6 +163,18 @@ export default function WarehouseMaps() {
   const selectedBlock = useMemo(() => layout.blocks.find((b) => b.uid === selectedBlockId) || null, [layout.blocks, selectedBlockId]);
   const shelfBlocks = useMemo(() => layout.blocks.filter((b) => b.kind === "shelf"), [layout.blocks]);
   const isAllocationMode = wizardMode === "view" || wizardMode === "manage";
+  const showWizardSidebar = wizardMode !== "view";
+  const previewShelfBlock = useMemo(
+    () => (shelf3dPreview.open ? layout.blocks.find((b) => b.uid === shelf3dPreview.blockUid && b.kind === "shelf") || null : null),
+    [layout.blocks, shelf3dPreview]
+  );
+  const serializeLayout = useCallback((layoutValue) => JSON.stringify(normalizeLayout(layoutValue || DEFAULT_LAYOUT)), []);
+  const currentLayoutSignature = useMemo(() => serializeLayout(layout), [layout, serializeLayout]);
+  const hasUnsavedLayoutChanges = useMemo(() => {
+    if (!wizardOpen || isAllocationMode) return false;
+    if (!savedLayoutSignature) return false;
+    return currentLayoutSignature !== savedLayoutSignature;
+  }, [currentLayoutSignature, isAllocationMode, savedLayoutSignature, wizardOpen]);
 
   const allocationBlockId = useMemo(() => {
     const target = String(allocation.scaffale || "").trim().toLowerCase();
@@ -221,6 +245,7 @@ export default function WarehouseMaps() {
       setActiveWarehouseNotes(String(row.notes || ""));
       setActiveWarehouseLastUpdatedAt(row?.lastUpdatedAt ? new Date(row.lastUpdatedAt).toISOString().slice(0, 16) : nowLocalInput());
       setLayout(normalized);
+      setSavedLayoutSignature(serializeLayout(normalized));
       setSelectedBlockId(normalized.blocks[0]?.uid || "");
       setViewport({ zoom: 1, x: 24, y: 24 });
       setWizardMode(modeOverride || forcedMode);
@@ -228,7 +253,7 @@ export default function WarehouseMaps() {
     } catch (err) {
       setError(err.message || "Errore apertura wizard");
     }
-  }, [forcedMode]);
+  }, [forcedMode, serializeLayout]);
 
   const createWarehouse = useCallback(async () => {
     const name = String(createDraft.name || "").trim();
@@ -264,11 +289,20 @@ export default function WarehouseMaps() {
     }
   }, [createDraft, creating, forcedMode, loadMaps, openWizardForWarehouse]);
 
-  const closeWizard = useCallback(() => {
+  const closeWizard = useCallback((options = {}) => {
+    const force = options?.force === true;
+    if (!force && hasUnsavedLayoutChanges) {
+      const proceed = window.confirm("Ci sono modifiche non salvate al layout. Vuoi uscire comunque?");
+      if (!proceed) return;
+    }
+    if (popupMode) {
+      window.close();
+      return;
+    }
     setWizardOpen(false);
     setWizardMode(forcedMode);
     setSaving(false);
-  }, [forcedMode]);
+  }, [forcedMode, hasUnsavedLayoutChanges, popupMode]);
 
   const saveWarehouseLayout = useCallback(async () => {
     if (!activeWarehouseId || isAllocationMode || saving) return;
@@ -289,13 +323,15 @@ export default function WarehouseMaps() {
       });
       if (!res.ok) throw new Error("Errore salvataggio piantina");
       setInfo("Piantina salvata");
+      setSavedLayoutSignature(serializeLayout(layout));
       await loadMaps();
+      closeWizard({ force: true });
     } catch (err) {
       setError(err.message || "Errore salvataggio piantina");
     } finally {
       setSaving(false);
     }
-  }, [activeWarehouseAddress, activeWarehouseId, activeWarehouseLastUpdatedAt, activeWarehouseName, activeWarehouseNotes, isAllocationMode, layout, loadMaps, saving]);
+  }, [activeWarehouseAddress, activeWarehouseId, activeWarehouseLastUpdatedAt, activeWarehouseName, activeWarehouseNotes, closeWizard, isAllocationMode, layout, loadMaps, saving, serializeLayout]);
 
   const saveAllocation = useCallback(async () => {
     if (wizardMode !== "manage" || !allocation.movementCod || allocation.saving) return;
@@ -317,12 +353,13 @@ export default function WarehouseMaps() {
       });
       if (!res.ok) throw new Error("Errore salvataggio allocazione");
       setInfo("Allocazione aggiornata");
+      closeWizard({ force: true });
     } catch (err) {
       setError(err.message || "Errore salvataggio allocazione");
     } finally {
       setAllocation((prev) => ({ ...prev, saving: false }));
     }
-  }, [allocation, wizardMode]);
+  }, [allocation, closeWizard, wizardMode]);
 
   const addElement = (kind) => {
     const nextNumber = getNextBlockNumber(kind, layout.blocks);
@@ -346,6 +383,7 @@ export default function WarehouseMaps() {
   const beginResize = (event, block, anchor) => {
     event.preventDefault();
     event.stopPropagation();
+    const rotationRad = (Number(block?.rotation || 0) * Math.PI) / 180;
     resizeRef.current = {
       pointerId: event.pointerId,
       id: block.uid,
@@ -355,6 +393,9 @@ export default function WarehouseMaps() {
       baseY: block.y,
       baseW: block.w,
       baseH: block.h,
+      baseCx: Number(block.x || 0) + Number(block.w || 0) / 2,
+      baseCy: Number(block.y || 0) + Number(block.h || 0) / 2,
+      rotationRad,
       anchor,
       zoom: viewport.zoom
     };
@@ -456,6 +497,13 @@ export default function WarehouseMaps() {
   }, [activeWarehouseId, allocation.movementCod, forcedMode, loadAllocationByMovement, openWizardForWarehouse, rows, wizardOpen]);
 
   useEffect(() => {
+    if (!wizardOpen || wizardMode !== "view") {
+      setShelf3dPreview({ open: false, blockUid: "" });
+      setHoveredPreviewCell(null);
+    }
+  }, [wizardMode, wizardOpen]);
+
+  useEffect(() => {
     const onPointerMove = (event) => {
       if (panRef.current && panRef.current.pointerId === event.pointerId) {
         const state = panRef.current;
@@ -481,77 +529,34 @@ export default function WarehouseMaps() {
       }
       if (resizeRef.current && resizeRef.current.pointerId === event.pointerId) {
         const state = resizeRef.current;
-        const dx = (event.clientX - state.startX) / state.zoom;
-        const dy = (event.clientY - state.startY) / state.zoom;
+        const dxWorld = (event.clientX - state.startX) / state.zoom;
+        const dyWorld = (event.clientY - state.startY) / state.zoom;
+        const cos = Math.cos(Number(state.rotationRad || 0));
+        const sin = Math.sin(Number(state.rotationRad || 0));
+        const dxLocal = dxWorld * cos + dyWorld * sin;
+        const dyLocal = -dxWorld * sin + dyWorld * cos;
         const minW = 40;
         const minH = 30;
-        let nextX = state.baseX;
-        let nextY = state.baseY;
-        let nextW = state.baseW;
-        let nextH = state.baseH;
-
-        if (state.anchor === "br") {
-          nextW = state.baseW + dx;
-          nextH = state.baseH + dy;
-        } else if (state.anchor === "tr") {
-          nextW = state.baseW + dx;
-          nextH = state.baseH - dy;
-          nextY = state.baseY + dy;
-        } else if (state.anchor === "bl") {
-          nextW = state.baseW - dx;
-          nextH = state.baseH + dy;
-          nextX = state.baseX + dx;
-        } else if (state.anchor === "tl") {
-          nextW = state.baseW - dx;
-          nextH = state.baseH - dy;
-          nextX = state.baseX + dx;
-          nextY = state.baseY + dy;
-        } else if (state.anchor === "t") {
-          nextH = state.baseH - dy;
-          nextY = state.baseY + dy;
-        } else if (state.anchor === "b") {
-          nextH = state.baseH + dy;
-        } else if (state.anchor === "l") {
-          nextW = state.baseW - dx;
-          nextX = state.baseX + dx;
-        } else if (state.anchor === "r") {
-          nextW = state.baseW + dx;
-        }
-
-        if (nextW < minW) {
-          if (state.anchor === "tl" || state.anchor === "bl") {
-            nextX -= minW - nextW;
-          }
-          nextW = minW;
-        }
-        if (nextH < minH) {
-          if (state.anchor === "tl" || state.anchor === "tr") {
-            nextY -= minH - nextH;
-          }
-          nextH = minH;
-        }
-
-        let rect = { x: nextX, y: nextY, w: nextW, h: nextH };
-        if (snapEnabled) {
-          const tolerance = 8 / Math.max(state.zoom, 0.25);
-          const snapped = applySnapForMove(state.id, rect, tolerance);
-          const dxSnap = snapped.x - rect.x;
-          const dySnap = snapped.y - rect.y;
-          const anchor = String(state.anchor || "");
-          if (anchor.includes("l")) {
-            rect = { ...rect, x: rect.x + dxSnap, w: Math.max(40, rect.w - dxSnap) };
-          } else if (anchor.includes("r")) {
-            rect = { ...rect, w: Math.max(40, rect.w + dxSnap) };
-          }
-          if (anchor.includes("t")) {
-            rect = { ...rect, y: rect.y + dySnap, h: Math.max(30, rect.h - dySnap) };
-          } else if (anchor.includes("b")) {
-            rect = { ...rect, h: Math.max(30, rect.h + dySnap) };
-          }
-          setGuideLines({ x: snapped.guideX, y: snapped.guideY });
-        } else {
-          setGuideLines({ x: null, y: null });
-        }
+        const anchor = String(state.anchor || "");
+        const widthSign = anchor.includes("r") ? 1 : anchor.includes("l") ? -1 : 0;
+        const heightSign = anchor.includes("b") ? 1 : anchor.includes("t") ? -1 : 0;
+        const requestedDeltaW = widthSign * dxLocal;
+        const requestedDeltaH = heightSign * dyLocal;
+        const nextW = Math.max(minW, Number(state.baseW || 0) + requestedDeltaW);
+        const nextH = Math.max(minH, Number(state.baseH || 0) + requestedDeltaH);
+        const effectiveDeltaW = nextW - Number(state.baseW || 0);
+        const effectiveDeltaH = nextH - Number(state.baseH || 0);
+        const shiftX = cos * (widthSign * effectiveDeltaW * 0.5) + -sin * (heightSign * effectiveDeltaH * 0.5);
+        const shiftY = sin * (widthSign * effectiveDeltaW * 0.5) + cos * (heightSign * effectiveDeltaH * 0.5);
+        const centerX = Number(state.baseCx || 0) + shiftX;
+        const centerY = Number(state.baseCy || 0) + shiftY;
+        const rect = {
+          x: centerX - nextW / 2,
+          y: centerY - nextH / 2,
+          w: nextW,
+          h: nextH
+        };
+        setGuideLines({ x: null, y: null });
         setLayout((prev) => ({
           ...prev,
           blocks: prev.blocks.map((b) =>
@@ -583,7 +588,7 @@ export default function WarehouseMaps() {
       window.removeEventListener("pointermove", onPointerMove);
       window.removeEventListener("pointerup", onPointerUp);
     };
-  }, [applySnapForMove, snapEnabled]);
+  }, [applySnapForMove]);
 
   const startPan = (event) => {
     if (event.button !== 0 && event.button !== 1) return;
@@ -613,12 +618,14 @@ export default function WarehouseMaps() {
   return (
     <AppLayout
       fullscreen
+      shellless={popupMode}
       contextLabel="Magazzino-Lab"
       pageTitle="Piantine Magazzino"
       brandContext="Magazzino"
       defaultOpenSection="MAGAZZINO-LAB"
       mainClassName="flex min-h-0 flex-1 flex-col gap-3 px-3 py-6 min-w-0 w-full max-w-full overflow-x-hidden sm:px-6"
     >
+      {!popupMode ? (
       <section className="warehouse-section flex min-h-0 min-w-0 w-full max-w-full flex-1 flex-col overflow-x-hidden rounded-lg border border-[var(--border)] bg-[var(--surface)] p-3 sm:p-4">
         <div className="min-w-0">
           <label className="text-xs uppercase tracking-[0.2em] text-[var(--muted)]">Ricerca</label>
@@ -687,8 +694,9 @@ export default function WarehouseMaps() {
           </table>
         </div>
       </section>
+      ) : null}
 
-      {createOpen ? (
+      {!popupMode && createOpen ? (
         <div className="fixed inset-0 z-[80] flex items-center justify-center bg-black/70 px-3" onMouseDown={() => setCreateOpen(false)}>
           <div className="w-full max-w-xl rounded-xl border border-[var(--border)] bg-[var(--surface)] p-4" onMouseDown={(event) => event.stopPropagation()}>
             <div className="flex items-start justify-between gap-3">
@@ -709,8 +717,14 @@ export default function WarehouseMaps() {
         </div>
       ) : null}
 
+      {popupMode && !wizardOpen ? (
+        <div className="flex h-full min-h-0 w-full items-center justify-center rounded-lg border border-[var(--border)] bg-[var(--surface)]">
+          <p className="text-sm text-[var(--muted)]">Caricamento wizard...</p>
+        </div>
+      ) : null}
+
       {wizardOpen ? (
-        <div className="fixed inset-0 z-[90] bg-black/75 p-3" onMouseDown={closeWizard}>
+        <div className="fixed inset-0 z-[90] bg-black/75 p-3" onMouseDown={() => closeWizard()}>
           <div className="flex h-full w-full min-h-0 flex-col rounded-xl border border-[var(--border)] bg-[var(--surface)]" onMouseDown={(event) => event.stopPropagation()}>
             <div className="flex items-center justify-between border-b border-[var(--border)] px-4 py-3">
               <div><p className="text-xs uppercase tracking-[0.2em] text-[var(--muted)]">Wizard Magazzino</p><h3 className="text-lg font-semibold">{activeWarehouseName || "Piantina"}</h3></div>
@@ -720,11 +734,12 @@ export default function WarehouseMaps() {
                 <button type="button" className="h-9 rounded-md border border-[var(--border)] px-3 text-xs" onClick={() => setViewport({ zoom: 1, x: 24, y: 24 })}>Reset view</button>
                 {!isAllocationMode ? <button type="button" onClick={saveWarehouseLayout} disabled={saving} className="h-9 rounded-md bg-emerald-500 px-3 text-xs font-semibold text-white disabled:opacity-60">{saving ? "Salvataggio..." : "Salva"}</button> : null}
                 {wizardMode === "manage" ? <button type="button" onClick={saveAllocation} disabled={allocation.saving} className="h-9 rounded-md bg-emerald-500 px-3 text-xs font-semibold text-white disabled:opacity-60">{allocation.saving ? "Salvataggio..." : "Salva allocazione"}</button> : null}
-                <button type="button" className="h-9 w-9 rounded-md border border-[var(--border)]" onClick={closeWizard}><i className="fa-solid fa-xmark" aria-hidden="true" /></button>
+                <button type="button" className="h-9 w-9 rounded-md border border-[var(--border)]" onClick={() => closeWizard()}><i className="fa-solid fa-xmark" aria-hidden="true" /></button>
               </div>
             </div>
 
             <div className="flex min-h-0 flex-1 flex-row gap-3 p-3">
+              {showWizardSidebar ? (
               <div className="min-h-0 w-[340px] shrink-0 overflow-auto rounded-md border border-[var(--border)] p-3">
                 <p className="text-xs uppercase tracking-[0.2em] text-[var(--muted)]">{isAllocationMode ? "Allocazione" : "Strumenti wizard"}</p>
                 {!isAllocationMode ? (
@@ -740,6 +755,43 @@ export default function WarehouseMaps() {
                     <p className="text-xs uppercase tracking-[0.2em] text-[var(--muted)]">Elemento selezionato</p>
                     <input value={selectedBlock.label || ""} onChange={(event) => !isAllocationMode && updateSelectedBlock({ label: event.target.value })} disabled={isAllocationMode} className="h-8 w-full rounded-md border border-[var(--border)] bg-[var(--surface)] px-2 text-xs" />
                     {selectedBlock.kind === "shape" && !isAllocationMode ? <select value={selectedBlock.shape || "rect"} onChange={(event) => updateSelectedBlock({ shape: event.target.value })} className="h-8 w-full rounded-md border border-[var(--border)] bg-[var(--surface)] px-2 text-xs"><option value="rect">Rettangolo</option><option value="circle">Cerchio</option></select> : null}
+                    {(selectedBlock.kind === "shape" || selectedBlock.kind === "prop") && !isAllocationMode ? (
+                      <label className="grid gap-1 text-[10px] uppercase tracking-[0.14em] text-[var(--muted)]">
+                        Colore
+                        <input
+                          type="color"
+                          value={String(selectedBlock.color || "#38bdf8")}
+                          onChange={(event) => updateSelectedBlock({ color: event.target.value })}
+                          className="h-8 w-full cursor-pointer rounded-md border border-[var(--border)] bg-[var(--surface)] px-1"
+                        />
+                      </label>
+                    ) : null}
+                    {selectedBlock.kind === "shelf" && !isAllocationMode ? (
+                      <div className="grid grid-cols-2 gap-2">
+                        <label className="grid gap-1 text-[10px] uppercase tracking-[0.14em] text-[var(--muted)]">
+                          Righe
+                          <input
+                            type="number"
+                            min="1"
+                            step="1"
+                            value={Math.max(1, parseInt(selectedBlock.rows, 10) || 1)}
+                            onChange={(event) => updateSelectedBlock({ rows: Math.max(1, parseInt(event.target.value, 10) || 1) })}
+                            className="h-8 w-full rounded-md border border-[var(--border)] bg-[var(--surface)] px-2 text-xs text-[var(--page-fg)] normal-case tracking-normal"
+                          />
+                        </label>
+                        <label className="grid gap-1 text-[10px] uppercase tracking-[0.14em] text-[var(--muted)]">
+                          Colonne
+                          <input
+                            type="number"
+                            min="1"
+                            step="1"
+                            value={Math.max(1, parseInt(selectedBlock.cols, 10) || 1)}
+                            onChange={(event) => updateSelectedBlock({ cols: Math.max(1, parseInt(event.target.value, 10) || 1) })}
+                            className="h-8 w-full rounded-md border border-[var(--border)] bg-[var(--surface)] px-2 text-xs text-[var(--page-fg)] normal-case tracking-normal"
+                          />
+                        </label>
+                      </div>
+                    ) : null}
                   </div>
                 ) : null}
 
@@ -758,7 +810,7 @@ export default function WarehouseMaps() {
                         >
                           <span className="truncate">{shelf.label || shelf.id}</span>
                           <span className="text-[10px] text-[var(--muted)]">
-                            {shelf.w}x{shelf.h}
+                            {Math.max(1, parseInt(shelf.rows, 10) || 1)}R x {Math.max(1, parseInt(shelf.cols, 10) || 1)}C
                           </span>
                         </button>
                       ))
@@ -798,6 +850,7 @@ export default function WarehouseMaps() {
                   </div>
                 ) : null}
               </div>
+              ) : null}
 
               <div
                 ref={canvasWrapRef}
@@ -842,12 +895,22 @@ export default function WarehouseMaps() {
                           event.preventDefault();
                           event.stopPropagation();
                           setSelectedBlockId(block.uid);
+                          if (wizardMode === "view" && block.kind === "shelf") {
+                            setShelf3dPreview({ open: true, blockUid: block.uid });
+                            setHoveredPreviewCell(null);
+                            return;
+                          }
                           if (wizardMode === "manage" && block.kind === "shelf") setAllocation((prev) => ({ ...prev, scaffale: String(block.label || block.id || "") }));
                           if (isAllocationMode) return;
                           dragRef.current = { pointerId: event.pointerId, id: block.uid, startX: event.clientX, startY: event.clientY, baseX: block.x, baseY: block.y, baseW: block.w, baseH: block.h, zoom: viewport.zoom };
                         }}
                       >
                         <span className="pointer-events-none">{block.label || block.id}</span>
+                        {block.kind === "shelf" ? (
+                          <span className="pointer-events-none absolute bottom-0.5 right-1 rounded-sm bg-black/35 px-1 py-[1px] text-[9px] font-semibold text-white">
+                            {Math.max(1, parseInt(block.rows, 10) || 1)}x{Math.max(1, parseInt(block.cols, 10) || 1)}
+                          </span>
+                        ) : null}
                         {!isAllocationMode ? (
                           <span className={active ? "pointer-events-none absolute inset-0 z-30 block" : "hidden"}>
                             {[
@@ -943,6 +1006,97 @@ export default function WarehouseMaps() {
                 <div className="pointer-events-none absolute bottom-3 left-3 rounded-md border border-[var(--border)] bg-black/60 px-2 py-1 text-[10px] text-[var(--muted)]">Zoom {Math.round(viewport.zoom * 100)}% - Pan: trascina lo sfondo</div>
               </div>
             </div>
+          </div>
+        </div>
+      ) : null}
+      {wizardOpen && wizardMode === "view" && previewShelfBlock ? (
+        <div
+          className="fixed inset-0 z-[96] flex items-center justify-center bg-black/70 p-4"
+          onMouseDown={() => {
+            setShelf3dPreview({ open: false, blockUid: "" });
+            setHoveredPreviewCell(null);
+          }}
+        >
+          <div className="w-full max-w-5xl rounded-xl border border-[var(--border)] bg-[var(--surface)] p-4 shadow-2xl" onMouseDown={(event) => event.stopPropagation()}>
+            <div className="flex items-start justify-between gap-4">
+              <div>
+                <p className="text-xs uppercase tracking-[0.2em] text-[var(--muted)]">Vista 3D scaffale</p>
+                <h3 className="mt-1 text-lg font-semibold">{previewShelfBlock.label || previewShelfBlock.id}</h3>
+              </div>
+              <button
+                type="button"
+                className="h-9 w-9 rounded-md border border-[var(--border)]"
+                onClick={() => {
+                  setShelf3dPreview({ open: false, blockUid: "" });
+                  setHoveredPreviewCell(null);
+                }}
+              >
+                <i className="fa-solid fa-xmark" aria-hidden="true" />
+              </button>
+            </div>
+            {(() => {
+              const cols = Math.max(1, parseInt(previewShelfBlock.cols, 10) || 1);
+              const rowsCount = Math.max(1, parseInt(previewShelfBlock.rows, 10) || 1);
+              const shelfWidth2d = Math.max(80, Number(previewShelfBlock.w || 120));
+              const baseUnitHeight = 28;
+              const depthPerRow = 18;
+              const logicalHeight = baseUnitHeight * rowsCount;
+              const logicalDepth = depthPerRow * rowsCount;
+              const scale = Math.min(2.1, Math.max(1.2, 280 / shelfWidth2d));
+              const fw = Math.round(shelfWidth2d * scale);
+              const fh = Math.round(logicalHeight * scale * 0.8);
+              const ox = Math.round(logicalDepth * 0.7);
+              const oy = Math.round(logicalDepth * 0.45);
+              const left = 70;
+              const top = 70;
+              const svgW = fw + ox + 140;
+              const svgH = fh + oy + 140;
+              const frontLeft = left;
+              const frontTop = top + oy;
+              const topFace = `${frontLeft},${frontTop} ${frontLeft + ox},${frontTop - oy} ${frontLeft + ox + fw},${frontTop - oy} ${frontLeft + fw},${frontTop}`;
+              const sideFace = `${frontLeft + fw},${frontTop} ${frontLeft + ox + fw},${frontTop - oy} ${frontLeft + ox + fw},${frontTop + fh - oy} ${frontLeft + fw},${frontTop + fh}`;
+              return (
+                <div className="mt-4">
+                  <svg viewBox={`0 0 ${svgW} ${svgH}`} className="h-[62vh] min-h-[320px] w-full rounded-lg border border-[var(--border)] bg-[linear-gradient(180deg,#0f172a,#111827)]">
+                    <polygon points={topFace} fill="#5eead4" fillOpacity="0.42" stroke="#99f6e4" strokeWidth="1.2" />
+                    <polygon points={sideFace} fill="#14b8a6" fillOpacity="0.52" stroke="#99f6e4" strokeWidth="1.2" />
+                    <rect x={frontLeft} y={frontTop} width={fw} height={fh} fill="#2dd4bf" fillOpacity="0.64" stroke="#99f6e4" strokeWidth="1.6" />
+                    {Array.from({ length: rowsCount }).flatMap((_, rowIndex) =>
+                      Array.from({ length: cols }).map((__, colIndex) => {
+                        const cellX = frontLeft + (colIndex * fw) / cols;
+                        const cellY = frontTop + (rowIndex * fh) / rowsCount;
+                        const cellW = fw / cols;
+                        const cellH = fh / rowsCount;
+                        const isHovered = hoveredPreviewCell?.row === rowIndex && hoveredPreviewCell?.col === colIndex;
+                        return (
+                          <rect
+                            key={`cell-${rowIndex}-${colIndex}`}
+                            x={cellX}
+                            y={cellY}
+                            width={cellW}
+                            height={cellH}
+                            fill={isHovered ? "rgba(236,253,245,0.26)" : "rgba(0,0,0,0)"}
+                            stroke={isHovered ? "#ecfeff" : "rgba(204,251,241,0.16)"}
+                            strokeWidth={isHovered ? "1.35" : "0.8"}
+                            style={{ cursor: "pointer" }}
+                            onMouseEnter={() => setHoveredPreviewCell({ row: rowIndex, col: colIndex })}
+                            onMouseLeave={() => setHoveredPreviewCell(null)}
+                          />
+                        );
+                      })
+                    )}
+                    {Array.from({ length: cols - 1 }).map((_, index) => {
+                      const x = frontLeft + ((index + 1) * fw) / cols;
+                      return <line key={`col-${index}`} x1={x} y1={frontTop} x2={x} y2={frontTop + fh} stroke="#ccfbf1" strokeOpacity="0.8" strokeWidth="1" />;
+                    })}
+                    {Array.from({ length: rowsCount - 1 }).map((_, index) => {
+                      const y = frontTop + ((index + 1) * fh) / rowsCount;
+                      return <line key={`row-${index}`} x1={frontLeft} y1={y} x2={frontLeft + fw} y2={y} stroke="#ccfbf1" strokeOpacity="0.7" strokeWidth="1" />;
+                    })}
+                  </svg>
+                </div>
+              );
+            })()}
           </div>
         </div>
       ) : null}

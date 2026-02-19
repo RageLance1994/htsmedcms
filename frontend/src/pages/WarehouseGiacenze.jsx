@@ -204,6 +204,8 @@ export default function WarehouseGiacenze() {
   const giacenzeFetchAbortRef = useRef(null);
   const movementsFetchAbortRef = useRef(null);
   const supplierDefaultedRef = useRef(false);
+  const rowContextMenuRef = useRef(null);
+  const movementsContextMenuRef = useRef(null);
   const [menuPos, setMenuPos] = useState({ left: 0, top: 0, width: 0 });
   const [rowMenu, setRowMenu] = useState({ open: false, x: 0, y: 0, item: null });
   const [movementsModalOpen, setMovementsModalOpen] = useState(false);
@@ -458,10 +460,26 @@ export default function WarehouseGiacenze() {
       movementCod: String(row.codMovimento || ""),
       codiceArticolo: String(row.codiceArticolo || ""),
       seriale: String(row.seriale || ""),
-      scaffale: String(row.scaffale || "")
+      scaffale: String(row.scaffale || ""),
+      popup: "1"
     });
     const url = `/warehouse/mappe?${params.toString()}`;
-    window.open(url, "_blank", "noopener,noreferrer");
+    const popupWidth = 1500;
+    const popupHeight = 900;
+    const left = Math.max(0, Math.round(window.screenX + (window.outerWidth - popupWidth) / 2));
+    const top = Math.max(0, Math.round(window.screenY + (window.outerHeight - popupHeight) / 2));
+    const features = [
+      `width=${popupWidth}`,
+      `height=${popupHeight}`,
+      `left=${left}`,
+      `top=${top}`,
+      "popup=yes",
+      "resizable=yes",
+      "scrollbars=yes",
+      "noopener=yes",
+      "noreferrer=yes"
+    ].join(",");
+    window.open(url, `warehouse-map-${mode}`, features);
     closeMovementsContextMenu();
   }, [movementsRowMenu]);
 
@@ -1382,17 +1400,22 @@ export default function WarehouseGiacenze() {
   };
 
   useEffect(() => {
-    const closeRowMenu = () => {
+    const closeRowMenu = (event) => {
+      const target = event?.target;
+      if (target instanceof Node) {
+        if (rowContextMenuRef.current?.contains(target)) return;
+        if (movementsContextMenuRef.current?.contains(target)) return;
+      }
       setRowMenu({ open: false, x: 0, y: 0, item: null });
       setMovementsRowMenu({ open: false, x: 0, y: 0, row: null, allocOpen: false });
     };
     window.addEventListener("resize", closeRowMenu);
     window.addEventListener("scroll", closeRowMenu, true);
-    document.addEventListener("mousedown", closeRowMenu);
+    document.addEventListener("mousedown", closeRowMenu, true);
     return () => {
       window.removeEventListener("resize", closeRowMenu);
       window.removeEventListener("scroll", closeRowMenu, true);
-      document.removeEventListener("mousedown", closeRowMenu);
+      document.removeEventListener("mousedown", closeRowMenu, true);
     };
   }, []);
 
@@ -1927,6 +1950,7 @@ export default function WarehouseGiacenze() {
         </div>
       </section>
 
+      <div ref={rowContextMenuRef}>
       <ContextMenu
         open={rowMenu.open}
         x={rowMenu.x}
@@ -1994,6 +2018,7 @@ export default function WarehouseGiacenze() {
             Nuovo
           </button>
       </ContextMenu>
+      </div>
 
       {exportModalOpen ? (
         <div className="fixed inset-0 z-[62] flex items-center justify-center bg-black/70 px-3 py-4" onMouseDown={() => setExportModalOpen(false)}>
@@ -2605,6 +2630,7 @@ export default function WarehouseGiacenze() {
         </div>
       ) : null}
 
+      <div ref={movementsContextMenuRef}>
       <ContextMenu
         open={movementsRowMenu.open}
         x={movementsRowMenu.x}
@@ -2613,7 +2639,7 @@ export default function WarehouseGiacenze() {
       >
         <button
           type="button"
-          onClick={closeMovementsContextMenu}
+          onClick={() => openAllocationMapPanel("manage")}
           className="flex w-full items-center gap-2 rounded-md px-3 py-2 text-sm hover:bg-[var(--hover)]"
         >
           <i className="fa-solid fa-pen-to-square text-[12px] text-[var(--muted)]" aria-hidden="true" />
@@ -2673,6 +2699,7 @@ export default function WarehouseGiacenze() {
           ) : null}
         </div>
       </ContextMenu>
+      </div>
 
       {causaliOpen ? (
         <div
