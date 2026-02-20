@@ -3,6 +3,12 @@ import { useNavigate } from "react-router-dom";
 import AppLayout from "../components/AppLayout.jsx";
 import ContextMenu from "../components/ui/ContextMenu.jsx";
 import useDebouncedCallback from "../hooks/useDebouncedCallback.js";
+import ankeLogo from "../assets/Anke.ico";
+import htsmedLogo from "../assets/HTS-Med-logo.png";
+import iamerLogo from "../assets/iamers-news.jpg";
+import iso9001Logo from "../assets/91_ISO9001_rgb_120.gif";
+import jasAnzLogo from "../assets/JAS-ANZ-LOGO-MDQMS-e1643900679772.jpg";
+import certExtraLogo from "../assets/download.png";
 
 const API_BASE = import.meta.env.VITE_API_URL || "http://localhost:3000";
 
@@ -21,6 +27,189 @@ const getLocalDateTimeValue = () => {
   now.setSeconds(0, 0);
   const local = new Date(now.getTime() - now.getTimezoneOffset() * 60000);
   return local.toISOString().slice(0, 16);
+};
+
+const escapeHtml = (value) =>
+  String(value ?? "")
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;")
+    .replace(/'/g, "&#39;");
+
+const formatDdtDateLabel = (value) => {
+  if (!value) return "-";
+  const parsed = new Date(value);
+  if (Number.isNaN(parsed.getTime())) return String(value);
+  return parsed.toLocaleString("it-IT", {
+    day: "2-digit",
+    month: "2-digit",
+    year: "numeric",
+    hour: "2-digit",
+    minute: "2-digit"
+  });
+};
+
+const buildSupplierDestinationAddress = (supplier) => {
+  const street = String(supplier?.indirizzo || "").trim();
+  const place = [supplier?.cap, supplier?.citta, supplier?.provincia].map((v) => String(v || "").trim()).filter(Boolean).join(" ");
+  return [street, place].filter(Boolean).join(" - ").trim();
+};
+
+const buildDdtA4Html = ({
+  ddt = {},
+  supplier = {},
+  causale = "",
+  items = [],
+  ankeLogoUrl = "",
+  htsmedLogoUrl = "",
+  iamerLogoUrl = "",
+  iso9001LogoUrl = "",
+  jasAnzLogoUrl = "",
+  certExtraLogoUrl = ""
+}) => {
+  const numero = String(ddt.numeroDdt || "-").trim() || "-";
+  const data = formatDdtDateLabel(ddt.data);
+  const cliente = String(supplier.nominativo || "-").trim() || "-";
+  const indirizzo = String(ddt.indirizzoDestinazione || "-").trim() || "-";
+  const trasporto = String(ddt.trasportoMezzo || "-").trim() || "-";
+  const note = [String(ddt.note || "").trim(), String(ddt.note2 || "").trim()].filter(Boolean).join(" - ") || "-";
+  const causaleTrasporto = String(causale || "-").trim() || "-";
+  const piva = String(supplier.piva || "-").trim() || "-";
+  const citta = String(supplier.citta || "").trim();
+  const cap = String(supplier.cap || "").trim();
+  const provincia = String(supplier.provincia || "").trim();
+  const destinatarioRiga2 = [indirizzo, [cap, citta, provincia].filter(Boolean).join(" ")].filter(Boolean).join(" - ");
+  const rows = (Array.isArray(items) ? items : []).map((row) => ({
+    codice: String(row?.codiceArticolo || "-").trim() || "-",
+    descrizione: String(row?.descrizione || "-").trim() || "-",
+    quantita: Math.max(parseInt(row?.quantita, 10) || 0, 0),
+    seriale: String(row?.seriale || "-").trim() || "-"
+  }));
+  const tableRows = rows.length
+    ? rows
+        .map(
+          (row) => `
+          <tr>
+            <td>${escapeHtml(row.codice)}</td>
+            <td>${escapeHtml(row.descrizione)}</td>
+            <td class="num">${escapeHtml(String(row.quantita))}</td>
+            <td>${escapeHtml(row.seriale)}</td>
+          </tr>`
+        )
+        .join("")
+    : `<tr><td colspan="4" class="empty">Nessuna riga articolo.</td></tr>`;
+  return `<!doctype html>
+<html lang="it">
+<head>
+  <meta charset="utf-8" />
+  <title>DDT ${escapeHtml(numero)}</title>
+  <style>
+    @page { size: A4; margin: 14mm; }
+    * { box-sizing: border-box; }
+    html, body { margin: 0; padding: 0; font-family: Arial, Helvetica, sans-serif; color: #111; }
+    body { background: #fff; }
+    .sheet { width: 100%; max-width: 180mm; margin: 0 auto; min-height: calc(297mm - 28mm); display: flex; flex-direction: column; }
+    .top { border: 1px solid #9ca3af; }
+    .logos { display: grid; grid-template-columns: 1fr 1fr; align-items: center; padding: 10px 14px 8px; min-height: 68px; }
+    .logo-left { color: #1789bf; font-weight: 800; font-size: 18px; letter-spacing: 0.03em; }
+    .logo-left img { max-height: 42px; max-width: 150px; object-fit: contain; }
+    .logo-right { text-align: right; color: #1f2937; font-weight: 700; font-size: 16px; }
+    .logo-right img { max-height: 36px; max-width: 120px; object-fit: contain; }
+    .bar { background: #0b8fd1; color: #fff; font-weight: 700; font-style: italic; padding: 3px 6px; font-size: 11px; border-top: 1px solid #6b7280; border-bottom: 1px solid #6b7280; }
+    .bar-grid { display: grid; grid-template-columns: 1fr 110px 86px; align-items: center; }
+    .bar-grid > div:nth-child(2), .bar-grid > div:nth-child(3) { text-align: center; border-left: 1px solid rgba(255,255,255,0.6); }
+    .section-title { background: #0b8fd1; color: #fff; font-weight: 700; font-style: italic; padding: 3px 6px; font-size: 11px; border-top: 1px solid #6b7280; }
+    .cell { border-top: 1px solid #9ca3af; padding: 4px 6px; font-size: 11px; font-style: italic; font-weight: 600; }
+    .cell-grid-2 { display: grid; grid-template-columns: 1fr 180px; gap: 0; }
+    .cell-grid-2 > div:nth-child(2) { text-align: right; border-left: 1px solid #9ca3af; }
+    .table { width: 100%; border-collapse: collapse; font-size: 10px; }
+    .table th, .table td { border: 1px solid #9ca3af; padding: 3px 4px; }
+    .table th { background: #0b8fd1; color: #fff; font-style: italic; font-size: 10px; text-align: left; }
+    .table th.num, .table td.num { text-align: right; }
+    .spacer { flex: 1; min-height: 140px; }
+    .bottom { border: 1px solid #9ca3af; border-top: none; }
+    .note-body { min-height: 44px; padding: 5px 6px; font-size: 11px; font-style: italic; }
+    .transport-sign { display: grid; grid-template-columns: 1fr 1fr; border-top: 1px solid #9ca3af; }
+    .transport-sign > div:first-child { border-right: 1px solid #9ca3af; }
+    .transport-body { padding: 5px 6px; min-height: 52px; font-size: 11px; font-style: italic; }
+    .sign-row { border-top: 1px solid #9ca3af; min-height: 30px; padding: 6px; font-size: 11px; }
+    .footer { margin-top: 8px; border-top: 1px solid #9ca3af; padding-top: 6px; font-size: 9px; color: #1f2937; display: grid; grid-template-columns: 1fr 1fr 170px; gap: 8px; align-items: end; }
+    .ft-logo { text-align: right; display: flex; justify-content: flex-end; align-items: flex-end; gap: 6px; flex-wrap: wrap; }
+    .ft-logo img { max-height: 24px; max-width: 52px; object-fit: contain; }
+    .num { text-align: right; }
+    .empty { text-align: center; color: #555; padding: 6px 0; }
+    @media print { .no-print { display: none !important; } }
+  </style>
+</head>
+<body>
+  <main class="sheet">
+    <section class="top">
+      <div class="logos">
+        <div class="logo-left">${htsmedLogoUrl ? `<img src="${escapeHtml(htsmedLogoUrl)}" alt="HTSMED" />` : "LOGO HTSMED"}</div>
+        <div class="logo-right">${ankeLogoUrl ? `<img src="${escapeHtml(ankeLogoUrl)}" alt="ANKE" />` : "LOGO ANKE"}</div>
+      </div>
+      <div class="bar bar-grid">
+        <div>DOCUMENTO DI TRASPORTO</div>
+        <div>${escapeHtml(numero)}</div>
+        <div>${escapeHtml(data.split(",")[0] || data)}</div>
+      </div>
+      <div class="section-title">MITTENTE/CEDENTE</div>
+      <div class="cell cell-grid-2">
+        <div>HTS MED S.R.L. - Partita IVA: 02759040641</div>
+        <div>Via Napoli 350 - Castellammare di Stabia (NA) 80053</div>
+      </div>
+      <div class="section-title" style="text-align:right;">DESTINATARIO</div>
+      <div class="cell cell-grid-2">
+        <div>${escapeHtml(cliente)} - Partita IVA: ${escapeHtml(piva)}</div>
+        <div>${escapeHtml(destinatarioRiga2 || "-")}</div>
+      </div>
+      <div class="section-title" style="text-align:right;">Indirizzo Destinazione Merce:</div>
+      <div class="cell">${escapeHtml(indirizzo)}</div>
+      <div class="section-title">CAUSALE DI TRASPORTO</div>
+      <div class="cell">${escapeHtml(causaleTrasporto)}</div>
+      <table class="table">
+        <thead>
+          <tr>
+            <th style="width:20%">Codice:</th>
+            <th style="width:62%">Descrizione:</th>
+            <th class="num" style="width:8%">qt</th>
+            <th style="width:10%">Seriale</th>
+          </tr>
+        </thead>
+        <tbody>${tableRows}</tbody>
+      </table>
+    </section>
+    <div class="spacer"></div>
+    <section class="bottom">
+      <div class="section-title">NOTE</div>
+      <div class="note-body">${escapeHtml(note)}</div>
+      <div class="transport-sign">
+        <div>
+          <div class="section-title">TRASPORTO A MEZZO</div>
+          <div class="transport-body">${escapeHtml(trasporto)}</div>
+        </div>
+        <div>
+          <div class="section-title">FIRMA CONDUCENTE</div>
+          <div class="sign-row"></div>
+          <div class="section-title">FIRMA DESTINATARIO</div>
+          <div class="sign-row"></div>
+        </div>
+      </div>
+    </section>
+    <section class="footer">
+      <div><strong>Sede Legale:</strong><br/>Via Napoli 350 - 80053 Castellammare di Stabia (NA)<br/>P.IVA 02759040641</div>
+      <div><strong>Sede Operativa:</strong><br/>Via Napoli 350 - 80053 Castellammare di Stabia (NA)<br/>www.htsmed.com</div>
+      <div class="ft-logo">
+        ${iamerLogoUrl ? `<img src="${escapeHtml(iamerLogoUrl)}" alt="IAMER" />` : ""}
+        ${iso9001LogoUrl ? `<img src="${escapeHtml(iso9001LogoUrl)}" alt="ISO 9001" />` : ""}
+        ${jasAnzLogoUrl ? `<img src="${escapeHtml(jasAnzLogoUrl)}" alt="JAS ANZ" />` : ""}
+        ${certExtraLogoUrl ? `<img src="${escapeHtml(certExtraLogoUrl)}" alt="Certificazioni" />` : ""}
+      </div>
+    </section>
+  </main>
+</body>
+</html>`;
 };
 
 const MEASUREMENT_UNITS = ["QT", "KG", "METRI", "LITRI"];
@@ -85,6 +274,21 @@ const getInitialNewArticleForm = () => ({
   alertGiacenza: false,
   giacenzaMinima: "",
   obsoleto: false,
+  note: ""
+});
+const getInitialQuickPartyForm = () => ({
+  tipo: "FORNITORE",
+  nominativo: "",
+  piva: "",
+  indirizzo: "",
+  citta: "",
+  cap: "",
+  provincia: "",
+  regione: "",
+  codFiscale: "",
+  telefoni: "",
+  email: "",
+  pec: "",
   note: ""
 });
 
@@ -233,6 +437,7 @@ export default function WarehouseGiacenze() {
   const [causaliSoloNonNascoste, setCausaliSoloNonNascoste] = useState(true);
   const [selectedCausale, setSelectedCausale] = useState(null);
   const [caricoWizardOpen, setCaricoWizardOpen] = useState(false);
+  const [scaricoWizardOpen, setScaricoWizardOpen] = useState(false);
   const [caricoDate, setCaricoDate] = useState(() => new Date().toISOString().slice(0, 10));
   const [caricoDateTimeLocal, setCaricoDateTimeLocal] = useState(() => getLocalDateTimeValue());
   const [supplierSearch, setSupplierSearch] = useState("");
@@ -265,6 +470,21 @@ export default function WarehouseGiacenze() {
   const newArticleDraftRef = useRef(getInitialNewArticleForm());
   const [newArticleSaving, setNewArticleSaving] = useState(false);
   const [newArticleError, setNewArticleError] = useState("");
+  const [quickPartyOpen, setQuickPartyOpen] = useState(false);
+  const quickPartyDraftRef = useRef(getInitialQuickPartyForm());
+  const [quickPartySaving, setQuickPartySaving] = useState(false);
+  const [quickPartyError, setQuickPartyError] = useState("");
+  const [ddtWizardOpen, setDdtWizardOpen] = useState(false);
+  const [ddtWizardSaving, setDdtWizardSaving] = useState(false);
+  const [ddtWizardError, setDdtWizardError] = useState("");
+  const [ddtWizardForm, setDdtWizardForm] = useState({
+    numeroDdt: "",
+    data: "",
+    indirizzoDestinazione: "",
+    trasportoMezzo: "",
+    note: "",
+    note2: ""
+  });
   const [expandedRows, setExpandedRows] = useState(() => new Set());
   const [serialsByCode, setSerialsByCode] = useState({});
   const [serialsLoading, setSerialsLoading] = useState({});
@@ -294,8 +514,8 @@ export default function WarehouseGiacenze() {
     },
     320
   );
-  const [debouncedSuppliersFetch, cancelDebouncedSuppliersFetch] = useDebouncedCallback((term) => {
-    fetchSuppliers(String(term || "").trim());
+  const [debouncedSuppliersFetch, cancelDebouncedSuppliersFetch] = useDebouncedCallback((term, tipo) => {
+    fetchSuppliers(String(term || "").trim(), tipo || "fornitori");
   }, 350);
 
   const [limit, setLimit] = useState(50);
@@ -326,6 +546,22 @@ export default function WarehouseGiacenze() {
     () => movementItems.some((item) => !Number.isFinite(Number(item?.quantita)) || Number(item.quantita) < 1),
     [movementItems]
   );
+  const scaricoInsufficientItems = useMemo(() => {
+    if (!scaricoWizardOpen) return [];
+    const qtyByCode = movementItems.reduce((acc, row) => {
+      const code = String(row?.articolo?.codiceArticolo || "");
+      if (!code) return acc;
+      acc[code] = Number(acc[code] || 0) + Math.max(parseInt(row?.quantita, 10) || 0, 0);
+      return acc;
+    }, {});
+    return Object.entries(qtyByCode)
+      .map(([code, qty]) => {
+        const row = movementItems.find((item) => String(item?.articolo?.codiceArticolo || "") === code);
+        const available = Number(row?.articolo?.giacenzaFisica || 0);
+        return { code, qty: Number(qty || 0), available };
+      })
+      .filter((row) => row.qty > row.available);
+  }, [movementItems, scaricoWizardOpen]);
 
   const fetchData = async () => {
     if (giacenzeFetchAbortRef.current) {
@@ -690,15 +926,17 @@ export default function WarehouseGiacenze() {
   };
 
   useEffect(() => {
-    if (!caricoWizardOpen) return;
-    debouncedSuppliersFetch(supplierSearch);
-  }, [supplierSearch, caricoWizardOpen, debouncedSuppliersFetch]);
+    if (!caricoWizardOpen && !scaricoWizardOpen) return;
+    const mode = scaricoWizardOpen ? "scarico" : "carico";
+    const tipo = getReferenceTipoFromCausale(mode, selectedCausale);
+    debouncedSuppliersFetch(supplierSearch, tipo);
+  }, [supplierSearch, caricoWizardOpen, scaricoWizardOpen, debouncedSuppliersFetch, selectedCausale]);
 
   useEffect(() => {
-    if (!caricoWizardOpen) return;
+    if (!caricoWizardOpen && !scaricoWizardOpen) return;
     const term = articleSearch.trim();
     fetchArticles(term);
-  }, [articleSearch, caricoWizardOpen]);
+  }, [articleSearch, caricoWizardOpen, scaricoWizardOpen]);
 
   useEffect(() => {
     fetchData();
@@ -727,7 +965,7 @@ export default function WarehouseGiacenze() {
   }, [movementsModalOpen, movementsPage, movementsTotalPages]);
 
   useEffect(() => {
-    if (!caricoWizardOpen) {
+    if (!caricoWizardOpen && !scaricoWizardOpen) {
       setSuppliers([]);
       setArticles([]);
       setSupplierSearch("");
@@ -738,12 +976,14 @@ export default function WarehouseGiacenze() {
       return;
     }
     if (!suppliers.length && !supplierSearch.trim()) {
-      fetchSuppliers("");
+      const mode = scaricoWizardOpen ? "scarico" : "carico";
+      const tipo = getReferenceTipoFromCausale(mode, selectedCausale);
+      fetchSuppliers("", tipo);
     }
     if (!articles.length && !articleSearch.trim()) {
       fetchArticles("");
     }
-  }, [caricoWizardOpen, suppliers.length, articles.length]);
+  }, [caricoWizardOpen, scaricoWizardOpen, suppliers.length, articles.length, selectedCausale]);
 
   useEffect(() => {
     return () => {
@@ -784,7 +1024,13 @@ export default function WarehouseGiacenze() {
   }, [newArticleOpen]);
 
   useEffect(() => {
-    if (!caricoWizardOpen || !supplierComboOpen) return;
+    if (!quickPartyOpen) return;
+    quickPartyDraftRef.current = getInitialQuickPartyForm();
+    setQuickPartyError("");
+  }, [quickPartyOpen]);
+
+  useEffect(() => {
+    if ((!caricoWizardOpen && !scaricoWizardOpen) || !supplierComboOpen) return;
     const handleOutsideClick = (event) => {
       if (!supplierComboRef.current?.contains(event.target)) {
         setSupplierComboOpen(false);
@@ -801,18 +1047,18 @@ export default function WarehouseGiacenze() {
       window.removeEventListener("mousedown", handleOutsideClick);
       window.removeEventListener("keydown", handleEscape);
     };
-  }, [caricoWizardOpen, supplierComboOpen]);
+  }, [caricoWizardOpen, scaricoWizardOpen, supplierComboOpen]);
 
   useEffect(() => {
-    if (!caricoWizardOpen) return;
+    if (!caricoWizardOpen && !scaricoWizardOpen) return;
     setCaricoDateTimeLocal(getLocalDateTimeValue());
-  }, [caricoWizardOpen]);
+  }, [caricoWizardOpen, scaricoWizardOpen]);
 
   useEffect(() => {
-    if (caricoWizardOpen) {
+    if (caricoWizardOpen || scaricoWizardOpen) {
       supplierDefaultedRef.current = false;
     }
-  }, [caricoWizardOpen]);
+  }, [caricoWizardOpen, scaricoWizardOpen]);
 
   useEffect(() => {
     const updateCompactLayout = () => {
@@ -843,19 +1089,19 @@ export default function WarehouseGiacenze() {
   }, []);
 
   useEffect(() => {
-    if (!caricoWizardOpen) return;
+    if (!caricoWizardOpen && !scaricoWizardOpen) return;
     if (compactCaricoLayout) {
       setDesktopExtraCardsCollapsed(true);
     }
-  }, [caricoWizardOpen, compactCaricoLayout]);
+  }, [caricoWizardOpen, scaricoWizardOpen, compactCaricoLayout]);
 
   useEffect(() => {
-    if (!caricoWizardOpen || suppliers.length === 0) return;
+    if ((!caricoWizardOpen && !scaricoWizardOpen) || suppliers.length === 0) return;
     if (supplierDefaultedRef.current) return;
     setSelectedSupplier(suppliers[0]);
     setSupplierSearch(suppliers[0]?.nominativo || "");
     supplierDefaultedRef.current = true;
-  }, [caricoWizardOpen, suppliers]);
+  }, [caricoWizardOpen, scaricoWizardOpen, suppliers]);
 
   const toggleMenu = (name) => {
     const targetRef = name === "movimenti" ? movimentiBtnRef : strumentiBtnRef;
@@ -929,6 +1175,9 @@ export default function WarehouseGiacenze() {
   };
 
   const openCausaliPicker = (type) => {
+    setCaricoWizardOpen(false);
+    setScaricoWizardOpen(false);
+    resetMovementWizardDraft();
     setCausaliType(type);
     setSelectedCausale(null);
     setCausaliOpen(true);
@@ -1263,56 +1512,253 @@ export default function WarehouseGiacenze() {
     }
   };
 
-  const submitCarico = async () => {
+  const getReferenceTipoFromCausale = (mode, causaleRow) => {
+    if (mode === "carico") return "fornitori";
+    const text = String(causaleRow?.descrizioneMovimento || "").toUpperCase();
+    if (text.includes("FORNITORE")) return "fornitori";
+    if (text.includes("CLIENTE") || text.includes("VENDITA") || text.includes("VISIONE")) return "clienti";
+    return "";
+  };
+
+  const resetMovementWizardDraft = () => {
+    setMovementItems([]);
+    setSelectedMovementItemId(null);
+    setSelectedArticle(null);
+    setArticleRowQuantities({});
+    setEntryQty(1);
+    setEntryUnit("QT");
+    setDdtCode("");
+    setDdtPdfFile(null);
+    setDdtUploadedFiles([]);
+    setOemPartNumber("");
+    setPurchaseCost("");
+    setAiAssistError("");
+    setAiAssistInfo("");
+    setCaricoError("");
+    setSupplierSearch("");
+    setSelectedSupplier(null);
+    setSupplierComboOpen(false);
+    setDesktopExtraCardsCollapsed(false);
+    supplierDefaultedRef.current = false;
+  };
+
+  const openDdtWizardPopup = () => {
+    setDdtWizardError("");
+    setDdtWizardForm({
+      numeroDdt: "",
+      data: caricoDateTimeLocal || getLocalDateTimeValue(),
+      indirizzoDestinazione: buildSupplierDestinationAddress(selectedSupplier),
+      trasportoMezzo: "",
+      note: "",
+      note2: ""
+    });
+    setDdtWizardOpen(true);
+  };
+
+  useEffect(() => {
+    if (!ddtWizardOpen) return;
+    const importedAddress = buildSupplierDestinationAddress(selectedSupplier);
+    setDdtWizardForm((prev) => ({ ...prev, indirizzoDestinazione: importedAddress }));
+  }, [ddtWizardOpen, selectedSupplier?.cod]);
+
+  const saveDdtWizard = async () => {
+    if (!selectedSupplier?.cod) {
+      setDdtWizardError("Seleziona un cliente/fornitore prima di emettere DDT.");
+      return;
+    }
+    const printWindow = window.open("", "_blank", "noopener,noreferrer");
+    if (!printWindow) {
+      setDdtWizardError("Popup bloccato dal browser: abilita i popup per generare il PDF.");
+      return;
+    }
+    setDdtWizardSaving(true);
+    setDdtWizardError("");
+    try {
+      const body = {
+        numeroDdt: String(ddtWizardForm.numeroDdt || "").trim(),
+        data: ddtWizardForm.data || new Date().toISOString(),
+        codCliente: Number(selectedSupplier.cod),
+        codCausale: Number(selectedCausale?.cod || 0) || null,
+        indirizzoDestinazione: String(ddtWizardForm.indirizzoDestinazione || "").trim(),
+        trasportoMezzo: String(ddtWizardForm.trasportoMezzo || "").trim(),
+        note: String(ddtWizardForm.note || "").trim(),
+        note2: String(ddtWizardForm.note2 || "").trim(),
+        items: movementItems.map((row) => ({
+          codiceArticolo: String(row?.articolo?.codiceArticolo || "").trim(),
+          descrizione: String(row?.articolo?.descrizione || "").trim(),
+          seriale: String(row?.seriale || row?.seriali?.[0] || "").trim(),
+          quantita: Math.max(parseInt(row?.quantita, 10) || 0, 0)
+        }))
+      };
+      const res = await fetch(`${API_BASE}/api/warehouse/ddt`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(body)
+      });
+      if (!res.ok) {
+        const payload = await res.json().catch(() => ({}));
+        throw new Error(payload?.errore || "Errore creazione DDT");
+      }
+      const payload = await res.json().catch(() => ({}));
+      const emitted = payload?.ddt || {};
+      const printableDdt = {
+        numeroDdt: emitted?.numeroDdt || body.numeroDdt || "-",
+        data: emitted?.data || body.data,
+        indirizzoDestinazione: body.indirizzoDestinazione,
+        trasportoMezzo: body.trasportoMezzo,
+        note: body.note,
+        note2: body.note2
+      };
+      const html = buildDdtA4Html({
+        ddt: printableDdt,
+        supplier: selectedSupplier,
+        causale: selectedCausale?.descrizioneMovimento || "",
+        items: body.items,
+        ankeLogoUrl: ankeLogo,
+        htsmedLogoUrl: htsmedLogo,
+        iamerLogoUrl: iamerLogo,
+        iso9001LogoUrl: iso9001Logo,
+        jasAnzLogoUrl: jasAnzLogo,
+        certExtraLogoUrl: certExtraLogo
+      });
+      const fileCode = String(printableDdt.numeroDdt || "senza-numero").replace(/[^\w.-]+/g, "_");
+      printWindow.document.open();
+      printWindow.document.write(html);
+      printWindow.document.close();
+      printWindow.document.title = `DDT_${fileCode}`;
+      printWindow.focus();
+      printWindow.print();
+      setDdtWizardOpen(false);
+    } catch (err) {
+      try {
+        printWindow.close();
+      } catch {
+        // no-op
+      }
+      setDdtWizardError(err.message || "Errore creazione DDT");
+    } finally {
+      setDdtWizardSaving(false);
+    }
+  };
+
+  const submitMovement = async (mode) => {
     if (!selectedCausale || !selectedSupplier || movementItems.length === 0) return;
     if (hasInvalidMovementQuantities) {
       setCaricoError("Quantita non valida: ogni riga deve avere almeno 1.");
       return;
     }
+    if (mode === "scarico") {
+      const qtyByCode = movementItems.reduce((acc, row) => {
+        const code = String(row?.articolo?.codiceArticolo || "");
+        if (!code) return acc;
+        acc[code] = Number(acc[code] || 0) + Math.max(parseInt(row?.quantita, 10) || 0, 0);
+        return acc;
+      }, {});
+      const insufficient = Object.entries(qtyByCode).find(([code, qty]) => {
+        const row = movementItems.find((item) => String(item?.articolo?.codiceArticolo || "") === code);
+        const available = Number(row?.articolo?.giacenzaFisica || 0);
+        return qty > available;
+      });
+      if (insufficient) {
+        setCaricoError(`Quantita insufficiente per ${insufficient[0]}: richiesta ${insufficient[1]}, disponibile ${Number(movementItems.find((item) => String(item?.articolo?.codiceArticolo || "") === insufficient[0])?.articolo?.giacenzaFisica || 0)}.`);
+        return;
+      }
+    }
+
     setCaricoSaving(true);
     setCaricoError("");
     try {
-      const res = await fetch(`${API_BASE}/api/warehouse/carico`, {
+      const endpoint = mode === "scarico" ? "scarico" : "carico";
+      const body = {
+        causale: selectedCausale,
+        dataMovimento: caricoDate,
+        items: movementItems.map((row) => {
+          const seriale = String(row?.seriale || row?.seriali?.[0] || "").trim();
+          return {
+            ...row,
+            seriale,
+            seriali: seriale ? [seriale] : [],
+            scaffale: String(row?.scaffale || ""),
+            riga: String(row?.riga || ""),
+            colonna: String(row?.colonna || ""),
+            note: String(row?.note || "")
+          };
+        })
+      };
+      if (mode === "scarico") {
+        body.riferimento = selectedSupplier;
+      } else {
+        body.fornitore = selectedSupplier;
+      }
+
+      const res = await fetch(`${API_BASE}/api/warehouse/${endpoint}`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          causale: selectedCausale,
-          dataMovimento: caricoDate,
-          fornitore: selectedSupplier,
-          items: movementItems.map((row) => {
-            const seriale = String(row?.seriale || row?.seriali?.[0] || "").trim();
-            return {
-              ...row,
-              seriale,
-              seriali: seriale ? [seriale] : [],
-              scaffale: String(row?.scaffale || ""),
-              riga: String(row?.riga || ""),
-              colonna: String(row?.colonna || ""),
-              note: String(row?.note || "")
-            };
-          })
-        })
+        body: JSON.stringify(body)
       });
       if (!res.ok) {
         const payload = await res.json().catch(() => ({}));
-        throw new Error(payload?.errore || "Errore salvataggio carico");
+        throw new Error(payload?.errore || `Errore salvataggio ${mode}`);
       }
       movementsCacheRef.current.clear();
       setCaricoWizardOpen(false);
+      setScaricoWizardOpen(false);
+      resetMovementWizardDraft();
       fetchData();
     } catch (err) {
-      setCaricoError(err.message || "Errore salvataggio carico");
+      setCaricoError(err.message || `Errore salvataggio ${mode}`);
     } finally {
       setCaricoSaving(false);
     }
   };
 
-  const fetchSuppliers = async (term = "") => {
+  const updateQuickPartyField = (field, value) => {
+    quickPartyDraftRef.current = { ...quickPartyDraftRef.current, [field]: value };
+  };
+
+  const saveQuickParty = async () => {
+    const draft = quickPartyDraftRef.current || getInitialQuickPartyForm();
+    const nominativo = String(draft.nominativo || "").trim();
+    const piva = String(draft.piva || "").trim();
+    if (!nominativo || !piva) {
+      setQuickPartyError("Compila almeno nominativo e P.IVA.");
+      return;
+    }
+    setQuickPartySaving(true);
+    setQuickPartyError("");
+    try {
+      const res = await fetch(`${API_BASE}/api/warehouse/fornitori`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ ...draft, nominativo, piva })
+      });
+      if (!res.ok) {
+        const payload = await res.json().catch(() => ({}));
+        throw new Error(payload?.errore || "Errore creazione anagrafica");
+      }
+      const payload = await res.json();
+      const created = payload?.anagrafica || null;
+      const mode = scaricoWizardOpen ? "scarico" : "carico";
+      const tipo = getReferenceTipoFromCausale(mode, selectedCausale);
+      await fetchSuppliers("", tipo);
+      if (created) {
+        setSelectedSupplier(created);
+        setSupplierSearch(created.nominativo || "");
+      }
+      setQuickPartyOpen(false);
+    } catch (err) {
+      setQuickPartyError(err.message || "Errore creazione anagrafica");
+    } finally {
+      setQuickPartySaving(false);
+    }
+  };
+
+  const fetchSuppliers = async (term = "", tipoOverride = "fornitori") => {
     setSuppliersLoading(true);
     try {
       const params = new URLSearchParams({
         search: term,
-        tipo: "fornitori",
+        tipo: String(tipoOverride || ""),
         limit: term ? "500" : "1500"
       });
       const res = await fetch(`${API_BASE}/api/warehouse/fornitori?${params.toString()}`);
@@ -1488,8 +1934,18 @@ export default function WarehouseGiacenze() {
                         openCausaliPicker("carico");
                         return;
                       }
+                      if (item.label === "Scarico Merce") {
+                        setOpenMenu("");
+                        openCausaliPicker("scarico");
+                        return;
+                      }
                       if (item.label === "Lista Movimenti") {
                         openMovementsModal("");
+                        return;
+                      }
+                      if (item.label === "Emissione DDT") {
+                        setOpenMenu("");
+                        openDdtWizardPopup();
                       }
                     }}
                   >
@@ -2712,8 +3168,12 @@ export default function WarehouseGiacenze() {
           >
             <div className="flex items-start justify-between gap-4">
               <div>
-                <p className="text-xs uppercase tracking-[0.2em] text-[var(--muted)]">Carico di magazzino</p>
-                <h2 className="mt-1 text-xl font-semibold">Seleziona causale di carico</h2>
+                <p className="text-xs uppercase tracking-[0.2em] text-[var(--muted)]">
+                  {causaliType === "scarico" ? "Scarico di magazzino" : "Carico di magazzino"}
+                </p>
+                <h2 className="mt-1 text-xl font-semibold">
+                  {causaliType === "scarico" ? "Seleziona causale di scarico" : "Seleziona causale di carico"}
+                </h2>
               </div>
               <button
                 type="button"
@@ -2803,7 +3263,14 @@ export default function WarehouseGiacenze() {
                   disabled={!selectedCausale}
                   onClick={() => {
                     setCausaliOpen(false);
-                    setCaricoWizardOpen(true);
+                    resetMovementWizardDraft();
+                    if (causaliType === "scarico") {
+                      setCaricoScaricoMode("scarico");
+                      setScaricoWizardOpen(true);
+                    } else {
+                      setCaricoScaricoMode("carico");
+                      setCaricoWizardOpen(true);
+                    }
                   }}
                 >
                   Procedi
@@ -2814,18 +3281,21 @@ export default function WarehouseGiacenze() {
         </div>
       ) : null}
 
-      {caricoWizardOpen ? (
+      {caricoWizardOpen || scaricoWizardOpen ? (
         <div className="fixed inset-0 z-[60] overflow-hidden bg-[var(--page-bg)] text-[var(--page-fg)]">
           <div className="h-full w-full overflow-y-auto overflow-x-hidden lg:overflow-hidden">
             <div className="flex min-h-full w-full flex-col bg-[var(--surface)] lg:h-full lg:overflow-hidden">
               <div className="relative border-b border-[var(--border)] px-4 py-3">
                 <div className="pr-12">
-                  <h2 className="text-lg font-semibold">Carico Merce</h2>
+                  <h2 className="text-lg font-semibold">{scaricoWizardOpen ? "Scarico Merce" : "Carico Merce"}</h2>
                 </div>
                 <button
                   type="button"
                   className="absolute right-4 top-3 flex h-9 w-9 items-center justify-center rounded-md border border-[var(--border)] bg-[var(--surface)] text-[var(--muted)] hover:bg-[var(--hover)]"
-                  onClick={() => setCaricoWizardOpen(false)}
+                  onClick={() => {
+                    setCaricoWizardOpen(false);
+                    setScaricoWizardOpen(false);
+                  }}
                   aria-label="Chiudi"
                 >
                   <i className="fa-solid fa-xmark" aria-hidden="true" />
@@ -2845,14 +3315,14 @@ export default function WarehouseGiacenze() {
                           const exact = suppliers.find((row) => String(row.nominativo || "") === value);
                           setSelectedSupplier(exact || null);
                         }}
-                        placeholder="Cerca fornitore"
+                        placeholder={scaricoWizardOpen ? "Cerca riferimento" : "Cerca fornitore"}
                         className="ml-3 w-full bg-transparent text-sm outline-none"
                       />
                       <button
                         type="button"
                         onClick={() => setSupplierComboOpen((prev) => !prev)}
                         className="ml-2 text-[var(--muted)]"
-                        aria-label="Apri elenco fornitori"
+                        aria-label={scaricoWizardOpen ? "Apri elenco riferimenti" : "Apri elenco fornitori"}
                       >
                         <i
                           className={`fa-solid fa-chevron-down text-[12px] transition-transform ${supplierComboOpen ? "rotate-180" : ""}`}
@@ -2863,7 +3333,11 @@ export default function WarehouseGiacenze() {
 
                     {supplierComboOpen ? (
                       <div className="absolute left-0 right-0 top-full z-20 mt-1 max-h-64 overflow-auto rounded-md border border-[var(--border)] bg-[var(--surface)] shadow-xl">
-                        {suppliersLoading ? <p className="px-3 py-2 text-xs text-[var(--muted)]">Loading suppliers...</p> : null}
+                        {suppliersLoading ? (
+                          <p className="px-3 py-2 text-xs text-[var(--muted)]">
+                            {scaricoWizardOpen ? "Caricamento riferimenti..." : "Caricamento fornitori..."}
+                          </p>
+                        ) : null}
                         {!suppliersLoading &&
                         suppliers.filter((row) => {
                           const term = supplierSearch.trim().toLowerCase();
@@ -2873,7 +3347,9 @@ export default function WarehouseGiacenze() {
                             String(row.piva || "").toLowerCase().includes(term)
                           );
                         }).length === 0 ? (
-                          <p className="px-3 py-2 text-xs text-[var(--muted)]">No suppliers found.</p>
+                          <p className="px-3 py-2 text-xs text-[var(--muted)]">
+                            {scaricoWizardOpen ? "Nessun riferimento trovato." : "Nessun fornitore trovato."}
+                          </p>
                         ) : null}
                         {!suppliersLoading
                           ? suppliers
@@ -2906,6 +3382,17 @@ export default function WarehouseGiacenze() {
                       </div>
                     ) : null}
                   </div>
+
+                  {!scaricoWizardOpen ? (
+                    <button
+                      type="button"
+                      onClick={() => setQuickPartyOpen(true)}
+                      className="h-11 rounded-md border border-[var(--border)] px-3 text-xs font-semibold text-[var(--muted)] hover:bg-[var(--hover)]"
+                    >
+                      <i className="fa-solid fa-user-plus mr-2" aria-hidden="true" />
+                      Nuovo cliente/fornitore
+                    </button>
+                  ) : null}
 
                   <div className="hidden h-11 items-center gap-2 text-[var(--muted)] sm:flex">
                     <i className="fa-solid fa-arrow-right text-sm" aria-hidden="true" />
@@ -2941,6 +3428,17 @@ export default function WarehouseGiacenze() {
                       className="h-11 w-full rounded-md border border-[var(--border)] bg-[var(--surface)] px-3 text-sm lg:min-w-[220px]"
                     />
                   </div>
+
+                  {scaricoWizardOpen ? (
+                    <button
+                      type="button"
+                      onClick={openDdtWizardPopup}
+                      className="inline-flex h-11 items-center gap-2 rounded-md border border-[var(--border)] px-3 text-xs font-semibold text-[var(--muted)] hover:bg-[var(--hover)]"
+                    >
+                      <i className="fa-solid fa-file-lines text-[12px]" aria-hidden="true" />
+                      Emetti DDT
+                    </button>
+                  ) : null}
                 </div>
               </div>
               <div className="min-h-0 flex-1 overflow-visible overflow-x-hidden px-3 py-3 sm:px-4 sm:py-4 lg:overflow-y-auto">
@@ -3173,7 +3671,7 @@ export default function WarehouseGiacenze() {
                             {movementItems.length === 0 ? (
                               <tr>
                                 <td colSpan={8} className="h-[220px] px-3 text-center align-middle text-xs text-[var(--muted)]">
-                                  Gli articoli caricati in magazzino appariranno qui.
+                                  {scaricoWizardOpen ? "Le righe di scarico appariranno qui." : "Gli articoli caricati in magazzino appariranno qui."}
                                 </td>
                               </tr>
                             ) : null}
@@ -3184,6 +3682,7 @@ export default function WarehouseGiacenze() {
                   </div>
                 </section>
 
+                {!scaricoWizardOpen ? (
                 <div className="relative hidden lg:block lg:py-1">
                   <div className="h-[2px] w-full bg-[var(--border)]" />
                   <button
@@ -3201,7 +3700,9 @@ export default function WarehouseGiacenze() {
                     />
                   </button>
                 </div>
+                ) : null}
 
+                {!scaricoWizardOpen ? (
                 <div
                   className={`max-h-none overflow-visible opacity-100 lg:overflow-hidden lg:transition-[max-height,opacity] lg:duration-300 lg:ease-out ${
                     desktopExtraCardsCollapsed ? "lg:max-h-0 lg:opacity-0 lg:pointer-events-none" : "lg:max-h-[520px] lg:opacity-100"
@@ -3320,22 +3821,32 @@ export default function WarehouseGiacenze() {
                   </div>
                 </section>
                 </div>
+                ) : null}
+
+                {scaricoWizardOpen && scaricoInsufficientItems.length > 0 ? (
+                  <div className="rounded-md border border-rose-500/40 bg-rose-500/10 px-3 py-2 text-xs text-rose-300">
+                    Quantita non disponibile: {scaricoInsufficientItems[0].code} (richiesta {scaricoInsufficientItems[0].qty}, disponibile {scaricoInsufficientItems[0].available}).
+                  </div>
+                ) : null}
 
                 <div className="mt-2 flex items-center justify-end gap-2 border-t border-[var(--border)] pt-2">
                   <button
                     type="button"
-                    onClick={() => setCaricoWizardOpen(false)}
+                    onClick={() => {
+                      setCaricoWizardOpen(false);
+                      setScaricoWizardOpen(false);
+                    }}
                     className="rounded-md border border-[var(--border)] px-3 py-1.5 text-xs font-semibold text-[var(--muted)] hover:bg-[var(--hover)]"
                   >
                     Annulla
                   </button>
                   <button
                     type="button"
-                    onClick={submitCarico}
-                    disabled={caricoSaving || !selectedCausale || !selectedSupplier || movementItems.length === 0 || hasInvalidMovementQuantities}
+                    onClick={() => submitMovement(scaricoWizardOpen ? "scarico" : "carico")}
+                    disabled={caricoSaving || !selectedCausale || !selectedSupplier || movementItems.length === 0 || hasInvalidMovementQuantities || (scaricoWizardOpen && scaricoInsufficientItems.length > 0)}
                     className="rounded-md bg-emerald-500 px-3 py-1.5 text-xs font-semibold text-white hover:bg-emerald-600 disabled:cursor-not-allowed disabled:opacity-60"
                   >
-                    {caricoSaving ? "Salvataggio..." : "Conferma carico"}
+                    {caricoSaving ? "Salvataggio..." : scaricoWizardOpen ? "Conferma scarico" : "Conferma carico"}
                   </button>
                 </div>
 
@@ -3405,6 +3916,440 @@ export default function WarehouseGiacenze() {
             {scanModal.status === "error" && scanModal.error ? (
               <p className="mt-3 text-sm text-rose-400">{scanModal.error}</p>
             ) : null}
+          </div>
+        </div>
+      ) : null}
+
+      {quickPartyOpen ? (
+        <div
+          className="fixed inset-0 z-[72] flex items-center justify-center bg-black/80 px-4 py-6"
+          onMouseDown={() => setQuickPartyOpen(false)}
+        >
+          <div
+            className="w-full max-w-3xl rounded-xl border border-[var(--border)] bg-[var(--surface)] p-4 shadow-xl"
+            onMouseDown={(event) => event.stopPropagation()}
+          >
+            <div className="flex items-start justify-between gap-4">
+              <div>
+                <p className="text-xs uppercase tracking-[0.2em] text-[var(--muted)]">Anagrafica rapida</p>
+                <h3 className="mt-1 text-lg font-semibold">Nuovo cliente/fornitore</h3>
+              </div>
+              <button
+                type="button"
+                className="flex h-8 w-8 items-center justify-center rounded-md border border-[var(--border)] text-[var(--muted)] hover:bg-[var(--hover)]"
+                onClick={() => setQuickPartyOpen(false)}
+                aria-label="Chiudi anagrafica rapida"
+              >
+                <i className="fa-solid fa-xmark" aria-hidden="true" />
+              </button>
+            </div>
+
+            <div className="mt-4 grid gap-3 sm:grid-cols-2">
+              <label className="text-sm">
+                <span className="text-xs uppercase tracking-[0.2em] text-[var(--muted)]">Tipo</span>
+                <select
+                  defaultValue="FORNITORE"
+                  onChange={(event) => updateQuickPartyField("tipo", event.target.value)}
+                  className="mt-1.5 w-full rounded-md border border-[var(--border)] bg-[var(--surface)] px-3 py-2 text-sm"
+                >
+                  <option value="FORNITORE">FORNITORE</option>
+                  <option value="CLIENTE">CLIENTE</option>
+                </select>
+              </label>
+              <label className="text-sm">
+                <span className="text-xs uppercase tracking-[0.2em] text-[var(--muted)]">Nominativo</span>
+                <input
+                  type="text"
+                  defaultValue=""
+                  onChange={(event) => updateQuickPartyField("nominativo", event.target.value)}
+                  className="mt-1.5 w-full rounded-md border border-[var(--border)] bg-[var(--surface)] px-3 py-2 text-sm"
+                />
+              </label>
+              <label className="text-sm">
+                <span className="text-xs uppercase tracking-[0.2em] text-[var(--muted)]">P.IVA</span>
+                <input
+                  type="text"
+                  defaultValue=""
+                  onChange={(event) => updateQuickPartyField("piva", event.target.value)}
+                  className="mt-1.5 w-full rounded-md border border-[var(--border)] bg-[var(--surface)] px-3 py-2 text-sm"
+                />
+              </label>
+              <label className="text-sm">
+                <span className="text-xs uppercase tracking-[0.2em] text-[var(--muted)]">Codice Fiscale</span>
+                <input
+                  type="text"
+                  defaultValue=""
+                  onChange={(event) => updateQuickPartyField("codFiscale", event.target.value)}
+                  className="mt-1.5 w-full rounded-md border border-[var(--border)] bg-[var(--surface)] px-3 py-2 text-sm"
+                />
+              </label>
+              <label className="text-sm sm:col-span-2">
+                <span className="text-xs uppercase tracking-[0.2em] text-[var(--muted)]">Indirizzo</span>
+                <input
+                  type="text"
+                  defaultValue=""
+                  onChange={(event) => updateQuickPartyField("indirizzo", event.target.value)}
+                  className="mt-1.5 w-full rounded-md border border-[var(--border)] bg-[var(--surface)] px-3 py-2 text-sm"
+                />
+              </label>
+              <label className="text-sm">
+                <span className="text-xs uppercase tracking-[0.2em] text-[var(--muted)]">Citta</span>
+                <input
+                  type="text"
+                  defaultValue=""
+                  onChange={(event) => updateQuickPartyField("citta", event.target.value)}
+                  className="mt-1.5 w-full rounded-md border border-[var(--border)] bg-[var(--surface)] px-3 py-2 text-sm"
+                />
+              </label>
+              <label className="text-sm">
+                <span className="text-xs uppercase tracking-[0.2em] text-[var(--muted)]">CAP</span>
+                <input
+                  type="text"
+                  defaultValue=""
+                  onChange={(event) => updateQuickPartyField("cap", event.target.value)}
+                  className="mt-1.5 w-full rounded-md border border-[var(--border)] bg-[var(--surface)] px-3 py-2 text-sm"
+                />
+              </label>
+              <label className="text-sm">
+                <span className="text-xs uppercase tracking-[0.2em] text-[var(--muted)]">Provincia</span>
+                <input
+                  type="text"
+                  defaultValue=""
+                  onChange={(event) => updateQuickPartyField("provincia", event.target.value)}
+                  className="mt-1.5 w-full rounded-md border border-[var(--border)] bg-[var(--surface)] px-3 py-2 text-sm"
+                />
+              </label>
+              <label className="text-sm">
+                <span className="text-xs uppercase tracking-[0.2em] text-[var(--muted)]">Regione</span>
+                <input
+                  type="text"
+                  defaultValue=""
+                  onChange={(event) => updateQuickPartyField("regione", event.target.value)}
+                  className="mt-1.5 w-full rounded-md border border-[var(--border)] bg-[var(--surface)] px-3 py-2 text-sm"
+                />
+              </label>
+              <label className="text-sm">
+                <span className="text-xs uppercase tracking-[0.2em] text-[var(--muted)]">Telefono</span>
+                <input
+                  type="text"
+                  defaultValue=""
+                  onChange={(event) => updateQuickPartyField("telefoni", event.target.value)}
+                  className="mt-1.5 w-full rounded-md border border-[var(--border)] bg-[var(--surface)] px-3 py-2 text-sm"
+                />
+              </label>
+              <label className="text-sm">
+                <span className="text-xs uppercase tracking-[0.2em] text-[var(--muted)]">Email</span>
+                <input
+                  type="email"
+                  defaultValue=""
+                  onChange={(event) => updateQuickPartyField("email", event.target.value)}
+                  className="mt-1.5 w-full rounded-md border border-[var(--border)] bg-[var(--surface)] px-3 py-2 text-sm"
+                />
+              </label>
+              <label className="text-sm sm:col-span-2">
+                <span className="text-xs uppercase tracking-[0.2em] text-[var(--muted)]">PEC</span>
+                <input
+                  type="text"
+                  defaultValue=""
+                  onChange={(event) => updateQuickPartyField("pec", event.target.value)}
+                  className="mt-1.5 w-full rounded-md border border-[var(--border)] bg-[var(--surface)] px-3 py-2 text-sm"
+                />
+              </label>
+              <label className="text-sm sm:col-span-2">
+                <span className="text-xs uppercase tracking-[0.2em] text-[var(--muted)]">Note</span>
+                <input
+                  type="text"
+                  defaultValue=""
+                  onChange={(event) => updateQuickPartyField("note", event.target.value)}
+                  className="mt-1.5 w-full rounded-md border border-[var(--border)] bg-[var(--surface)] px-3 py-2 text-sm"
+                />
+              </label>
+            </div>
+
+            {quickPartyError ? <p className="mt-3 text-sm text-rose-500">{quickPartyError}</p> : null}
+
+            <div className="mt-4 flex items-center justify-end gap-2">
+              <button
+                type="button"
+                onClick={() => setQuickPartyOpen(false)}
+                className="rounded-md border border-[var(--border)] px-3 py-1.5 text-xs font-semibold text-[var(--muted)] hover:bg-[var(--hover)]"
+              >
+                Annulla
+              </button>
+              <button
+                type="button"
+                onClick={saveQuickParty}
+                disabled={quickPartySaving}
+                className="rounded-md bg-emerald-500 px-3 py-1.5 text-xs font-semibold text-white hover:bg-emerald-600 disabled:cursor-not-allowed disabled:opacity-60"
+              >
+                {quickPartySaving ? "Salvataggio..." : "Salva anagrafica"}
+              </button>
+            </div>
+          </div>
+        </div>
+      ) : null}
+
+      {ddtWizardOpen ? (
+        <div
+          className="fixed inset-0 z-[72] flex items-start justify-center overflow-hidden bg-black/80 px-3 py-3 sm:items-center sm:px-4 sm:py-6"
+          onMouseDown={() => setDdtWizardOpen(false)}
+        >
+          <div
+            className="my-auto flex w-full max-w-[96rem] max-h-[calc(100dvh-1.5rem)] flex-col overflow-hidden rounded-xl border border-[var(--border)] bg-[var(--surface)] p-4 shadow-xl sm:max-h-[calc(100dvh-3rem)]"
+            onMouseDown={(event) => event.stopPropagation()}
+          >
+            <div className="flex items-start justify-between gap-4">
+              <div>
+                <p className="text-xs uppercase tracking-[0.2em] text-[var(--muted)]">Documento</p>
+                <h3 className="mt-1 text-lg font-semibold">Wizard Emissione DDT</h3>
+              </div>
+              <button
+                type="button"
+                className="flex h-8 w-8 items-center justify-center rounded-md border border-[var(--border)] text-[var(--muted)] hover:bg-[var(--hover)]"
+                onClick={() => setDdtWizardOpen(false)}
+                aria-label="Chiudi wizard DDT"
+              >
+                <i className="fa-solid fa-xmark" aria-hidden="true" />
+              </button>
+            </div>
+
+            <div className="mt-4 min-h-0 flex-1 overflow-hidden">
+              <div className="grid h-full min-h-0 gap-4 xl:grid-cols-[minmax(0,1fr)_minmax(420px,46%)]">
+                <div className="min-h-0 overflow-y-auto pr-1">
+                  <div className="grid gap-3 sm:grid-cols-2">
+                    <label className="text-sm">
+                      <span className="text-xs uppercase tracking-[0.2em] text-[var(--muted)]">Numero DDT</span>
+                      <input
+                        type="text"
+                        value={ddtWizardForm.numeroDdt}
+                        onChange={(event) => setDdtWizardForm((prev) => ({ ...prev, numeroDdt: event.target.value }))}
+                        className="mt-1.5 w-full rounded-md border border-[var(--border)] bg-[var(--surface)] px-3 py-2 text-sm"
+                      />
+                    </label>
+                    <label className="text-sm">
+                      <span className="text-xs uppercase tracking-[0.2em] text-[var(--muted)]">Data</span>
+                      <input
+                        type="datetime-local"
+                        value={ddtWizardForm.data}
+                        onChange={(event) => setDdtWizardForm((prev) => ({ ...prev, data: event.target.value }))}
+                        className="mt-1.5 w-full rounded-md border border-[var(--border)] bg-[var(--surface)] px-3 py-2 text-sm"
+                      />
+                    </label>
+                    <label className="text-sm sm:col-span-2">
+                      <span className="text-xs uppercase tracking-[0.2em] text-[var(--muted)]">Riferimento</span>
+                      <input
+                        type="text"
+                        value={selectedSupplier?.nominativo || ""}
+                        readOnly
+                        className="mt-1.5 w-full rounded-md border border-[var(--border)] bg-[var(--surface-soft)] px-3 py-2 text-sm text-[var(--muted)]"
+                      />
+                    </label>
+                    <label className="text-sm sm:col-span-2">
+                      <span className="text-xs uppercase tracking-[0.2em] text-[var(--muted)]">Indirizzo destinazione</span>
+                      <div className="mt-1.5 flex items-center gap-2">
+                        <input
+                          type="text"
+                          value={ddtWizardForm.indirizzoDestinazione}
+                          onChange={(event) => setDdtWizardForm((prev) => ({ ...prev, indirizzoDestinazione: event.target.value }))}
+                          className="w-full rounded-md border border-[var(--border)] bg-[var(--surface)] px-3 py-2 text-sm"
+                        />
+                        <button
+                          type="button"
+                          onClick={() =>
+                            setDdtWizardForm((prev) => ({
+                              ...prev,
+                              indirizzoDestinazione: buildSupplierDestinationAddress(selectedSupplier)
+                            }))
+                          }
+                          className="shrink-0 rounded-md border border-[var(--border)] px-2.5 py-2 text-[11px] font-semibold text-[var(--muted)] hover:bg-[var(--hover)]"
+                        >
+                          Importa da scheda
+                        </button>
+                      </div>
+                    </label>
+                    <label className="text-sm sm:col-span-2">
+                      <span className="text-xs uppercase tracking-[0.2em] text-[var(--muted)]">Trasporto a mezzo</span>
+                      <input
+                        type="text"
+                        value={ddtWizardForm.trasportoMezzo}
+                        onChange={(event) => setDdtWizardForm((prev) => ({ ...prev, trasportoMezzo: event.target.value }))}
+                        className="mt-1.5 w-full rounded-md border border-[var(--border)] bg-[var(--surface)] px-3 py-2 text-sm"
+                      />
+                    </label>
+                    <label className="text-sm sm:col-span-2">
+                      <span className="text-xs uppercase tracking-[0.2em] text-[var(--muted)]">Note</span>
+                      <input
+                        type="text"
+                        value={ddtWizardForm.note}
+                        onChange={(event) => setDdtWizardForm((prev) => ({ ...prev, note: event.target.value }))}
+                        className="mt-1.5 w-full rounded-md border border-[var(--border)] bg-[var(--surface)] px-3 py-2 text-sm"
+                      />
+                    </label>
+                  </div>
+
+                  <div className="mt-4 rounded-md border border-[var(--border)]">
+                    <table className="table-dense w-full text-xs">
+                      <thead className="bg-[var(--surface-strong)] text-[9px] uppercase tracking-[0.16em] text-[var(--muted)]">
+                        <tr className="text-left">
+                          <th className="px-2 py-1.5">Codice</th>
+                          <th className="px-2 py-1.5">Descrizione</th>
+                          <th className="px-2 py-1.5">Qta</th>
+                          <th className="px-2 py-1.5">Seriale</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {movementItems.map((row) => (
+                          <tr key={`ddt-row-${row.id}`} className="border-t border-[var(--border)]">
+                            <td className="px-2 py-1.5">{row?.articolo?.codiceArticolo || "-"}</td>
+                            <td className="px-2 py-1.5">{row?.articolo?.descrizione || "-"}</td>
+                            <td className="px-2 py-1.5">{row?.quantita || 0}</td>
+                            <td className="px-2 py-1.5">{row?.seriale || row?.seriali?.[0] || "-"}</td>
+                          </tr>
+                        ))}
+                        {movementItems.length === 0 ? (
+                          <tr>
+                            <td colSpan={4} className="px-2 py-4 text-center text-[var(--muted)]">Nessuna riga disponibile.</td>
+                          </tr>
+                        ) : null}
+                      </tbody>
+                    </table>
+                  </div>
+                </div>
+
+                <div className="min-h-0 overflow-y-auto rounded-md border border-[var(--border)] bg-[var(--surface-soft)] p-3">
+                  <div className="mx-auto min-h-full w-full max-w-[820px] bg-white p-6 text-black shadow-sm">
+                    <div className="border border-[#9ca3af]">
+                      <div className="grid min-h-[66px] grid-cols-2 items-center px-4 py-2">
+                        <div className="flex items-center">
+                          <img src={htsmedLogo} alt="HTSMED" className="max-h-10 max-w-[150px] object-contain" />
+                        </div>
+                        <div className="flex justify-end">
+                          <img src={ankeLogo} alt="ANKE" className="max-h-9 max-w-[120px] object-contain" />
+                        </div>
+                      </div>
+                      <div className="grid grid-cols-[1fr_108px_88px] bg-[#0b8fd1] px-2 py-1 text-[11px] font-bold italic text-white">
+                        <div>DOCUMENTO DI TRASPORTO</div>
+                        <div className="border-l border-white/60 text-center">{ddtWizardForm.numeroDdt || "-"}</div>
+                        <div className="border-l border-white/60 text-center">{formatDdtDateLabel(ddtWizardForm.data).split(",")[0] || "-"}</div>
+                      </div>
+                      <div className="border-t border-[#9ca3af] bg-[#0b8fd1] px-2 py-1 text-[11px] font-bold italic text-white">MITTENTE/CEDENTE</div>
+                      <div className="grid grid-cols-[1fr_180px] border-t border-[#9ca3af] text-[11px] font-semibold italic">
+                        <div className="px-2 py-1">HTS MED S.R.L. - Partita IVA: 02759040641</div>
+                        <div className="border-l border-[#9ca3af] px-2 py-1 text-right">Via Napoli 350 - Castellammare di Stabia (NA) 80053</div>
+                      </div>
+                      <div className="border-t border-[#9ca3af] bg-[#0b8fd1] px-2 py-1 text-right text-[11px] font-bold italic text-white">DESTINATARIO</div>
+                      <div className="grid grid-cols-[1fr_180px] border-t border-[#9ca3af] text-[11px] font-semibold italic">
+                        <div className="px-2 py-1">
+                          {(selectedSupplier?.nominativo || "-") + " - Partita IVA: " + (selectedSupplier?.piva || "-")}
+                        </div>
+                        <div className="border-l border-[#9ca3af] px-2 py-1 text-right">
+                          {[ddtWizardForm.indirizzoDestinazione || "-", selectedSupplier?.cap, selectedSupplier?.citta, selectedSupplier?.provincia]
+                            .filter(Boolean)
+                            .join(" ")}
+                        </div>
+                      </div>
+                      <div className="border-t border-[#9ca3af] bg-[#0b8fd1] px-2 py-1 text-right text-[11px] font-bold italic text-white">Indirizzo Destinazione Merce:</div>
+                      <div className="border-t border-[#9ca3af] px-2 py-1 text-[11px] font-semibold italic">{ddtWizardForm.indirizzoDestinazione || "-"}</div>
+                      <div className="border-t border-[#9ca3af] bg-[#0b8fd1] px-2 py-1 text-[11px] font-bold italic text-white">CAUSALE DI TRASPORTO</div>
+                      <div className="border-t border-[#9ca3af] px-2 py-1 text-[11px] font-semibold italic">{selectedCausale?.descrizioneMovimento || "-"}</div>
+                      <table className="w-full border-collapse text-[10px]">
+                        <thead>
+                          <tr className="bg-[#0b8fd1] text-left text-white">
+                            <th className="border border-[#9ca3af] px-1 py-1 font-bold italic">Codice:</th>
+                            <th className="border border-[#9ca3af] px-1 py-1 font-bold italic">Descrizione:</th>
+                            <th className="border border-[#9ca3af] px-1 py-1 text-right font-bold italic">qt</th>
+                            <th className="border border-[#9ca3af] px-1 py-1 font-bold italic">Seriale</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {movementItems.length > 0 ? (
+                            movementItems.map((row) => (
+                              <tr key={`preview-ddt-${row.id}`}>
+                                <td className="border border-[#9ca3af] px-1 py-1">{row?.articolo?.codiceArticolo || "-"}</td>
+                                <td className="border border-[#9ca3af] px-1 py-1">{row?.articolo?.descrizione || "-"}</td>
+                                <td className="border border-[#9ca3af] px-1 py-1 text-right">{row?.quantita || 0}</td>
+                                <td className="border border-[#9ca3af] px-1 py-1">{row?.seriale || row?.seriali?.[0] || "-"}</td>
+                              </tr>
+                            ))
+                          ) : (
+                            <tr>
+                              <td colSpan={4} className="border border-[#9ca3af] px-1 py-2 text-center text-[#6b7280]">
+                                -
+                              </td>
+                            </tr>
+                          )}
+                        </tbody>
+                      </table>
+                    </div>
+                    <div className="min-h-[160px]" />
+                    <div className="border border-[#9ca3af] border-t-0">
+                      <div className="bg-[#0b8fd1] px-2 py-1 text-[11px] font-bold italic text-white">NOTE</div>
+                      <div className="min-h-[44px] px-2 py-1 text-[11px] font-semibold italic">
+                        {[ddtWizardForm.note, ddtWizardForm.note2].filter(Boolean).join(" - ") || "-"}
+                      </div>
+                      <div className="grid grid-cols-2 border-t border-[#9ca3af]">
+                        <div className="border-r border-[#9ca3af]">
+                          <div className="bg-[#0b8fd1] px-2 py-1 text-[11px] font-bold italic text-white">TRASPORTO A MEZZO</div>
+                          <div className="min-h-[52px] px-2 py-1 text-[11px] font-semibold italic">{ddtWizardForm.trasportoMezzo || "-"}</div>
+                        </div>
+                        <div>
+                          <div className="bg-[#0b8fd1] px-2 py-1 text-[11px] font-bold italic text-white">FIRMA CONDUCENTE</div>
+                          <div className="min-h-[30px] border-t border-[#9ca3af]" />
+                          <div className="bg-[#0b8fd1] px-2 py-1 text-[11px] font-bold italic text-white">FIRMA DESTINATARIO</div>
+                          <div className="min-h-[30px] border-t border-[#9ca3af]" />
+                        </div>
+                      </div>
+                    </div>
+                    <div className="mt-2 grid grid-cols-[1fr_1fr_170px] gap-2 border-t border-[#9ca3af] pt-2 text-[9px] text-[#1f2937]">
+                      <div>
+                        <strong>Sede Legale:</strong>
+                        <br />
+                        Via Napoli 350 - 80053
+                        <br />
+                        Castellammare di Stabia (NA)
+                        <br />
+                        P. IVA: 02759040641
+                      </div>
+                      <div>
+                        <strong>Sede Operativa:</strong>
+                        <br />
+                        Via Napoli 350 - 80053
+                        <br />
+                        Castellammare di Stabia (NA)
+                        <br />
+                        www.htsmed.com
+                      </div>
+                      <div className="flex flex-wrap items-end justify-end gap-1.5">
+                        <img src={iamerLogo} alt="IAMER" className="max-h-6 max-w-[52px] object-contain" />
+                        <img src={iso9001Logo} alt="ISO 9001" className="max-h-6 max-w-[52px] object-contain" />
+                        <img src={jasAnzLogo} alt="JAS ANZ" className="max-h-6 max-w-[52px] object-contain" />
+                        <img src={certExtraLogo} alt="Certificazioni" className="max-h-6 max-w-[52px] object-contain" />
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            {ddtWizardError ? <p className="mt-3 text-sm text-rose-500">{ddtWizardError}</p> : null}
+
+            <div className="mt-4 flex items-center justify-end gap-2">
+              <button
+                type="button"
+                onClick={() => setDdtWizardOpen(false)}
+                className="rounded-md border border-[var(--border)] px-3 py-1.5 text-xs font-semibold text-[var(--muted)] hover:bg-[var(--hover)]"
+              >
+                Annulla
+              </button>
+              <button
+                type="button"
+                onClick={saveDdtWizard}
+                disabled={ddtWizardSaving}
+                className="rounded-md bg-emerald-500 px-3 py-1.5 text-xs font-semibold text-white hover:bg-emerald-600 disabled:cursor-not-allowed disabled:opacity-60"
+              >
+                {ddtWizardSaving ? "Emissione..." : "Emetti DDT"}
+              </button>
+            </div>
           </div>
         </div>
       ) : null}

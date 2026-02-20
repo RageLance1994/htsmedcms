@@ -2,8 +2,15 @@ import express from "express";
 import mongoose from "mongoose";
 import crypto from "crypto";
 import os from "os";
+import fs from "fs";
+import path from "path";
+import { fileURLToPath } from "url";
+import zlib from "zlib";
 
 const router = express.Router();
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
+const TEMPLATES_DIR = path.resolve(__dirname, "../templates");
 
 const getWarehouseDb = () => mongoose.connection.useDb("htstest", { useCache: true });
 
@@ -67,6 +74,231 @@ const toDateOrNull = (value) => {
   const d = new Date(value);
   if (Number.isNaN(d.getTime())) return null;
   return d;
+};
+
+const pickDdtTemplateBase = () => {
+  try {
+    const files = fs
+      .readdirSync(TEMPLATES_DIR, { withFileTypes: true })
+      .filter((entry) => entry.isFile())
+      .map((entry) => entry.name)
+      .filter((name) => /\.(dotx?|docx?|rtf)$/i.test(name));
+    const candidates = files.map((name) => {
+      const lower = name.toLowerCase();
+      let nameScore = 0;
+      if (/(^|[^a-z])ddt([^a-z]|$)/i.test(lower) || /documento.*trasporto|trasporto.*documento/i.test(lower)) {
+        nameScore += 100;
+      }
+      if (/(bolla|trasporto|vettore|spedizione)/i.test(lower)) nameScore += 35;
+      if (/(template|modello)/i.test(lower)) nameScore += 8;
+      if (lower.endsWith(".dotx") || lower.endsWith(".dot")) nameScore += 8;
+      if (lower.endsWith(".docx")) nameScore += 6;
+      if (lower.endsWith(".doc")) nameScore += 4;
+      if (/(letter|contltr|elegltr|profltr|normale|intestata|osteopenia|femore|lombo|densitometria|report)/i.test(lower)) {
+        nameScore -= 120;
+      }
+      if (/^winword/i.test(lower)) nameScore -= 120;
+
+      const preview = buildTemplatePreviewPayload(name);
+      const contentScore = Number(preview?.signalScore || 0) * 30;
+      const likelyDdt = Boolean(preview?.likelyDdt);
+      const score = nameScore + contentScore;
+      return { name, score, likelyDdt };
+    });
+    candidates.sort((a, b) => b.score - a.score || a.name.localeCompare(b.name, "it"));
+    const selected = candidates.find((row) => row.likelyDdt)?.name || null;
+    return {
+      selected,
+      candidates
+    };
+  } catch {
+    return { selected: null, candidates: [] };
+  }
+};
+
+const safeTemplateName = (name) => {
+  const raw = String(name || "").trim();
+  if (!raw) return "";
+  const base = path.basename(raw);
+  if (base !== raw) return "";
+  if (base.includes("..")) return "";
+  return base;
+};
+
+const extractTextFromRtf = (content) => {
+  const raw = String(content || "");
+  return raw
+    .replace(/\\'[0-9a-fA-F]{2}/g, " ")
+    .replace(/\\[a-zA-Z]+-?\d* ?/g, " ")
+    .replace(/[{}]/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+};
+
+const extractPrintableTextFromBinary = (buffer) => {
+  if (!buffer || !Buffer.isBuffer(buffer)) return "";
+  const latin = buffer.toString("latin1");
+  const chunks = latin.match(/[ -~]{4,}/g) || [];
+  return chunks.join(" ").replace(/\s+/g, " ").trim();
+};
+
+const findZipEocdOffset = (buffer) => {
+  if (!buffer || !Buffer.isBuffer(buffer) || buffer.length < 22) return -1;
+  const min = Math.max(0, buffer.length - 65557);
+  for (let i = buffer.length - 22; i >= min; i -= 1) {
+    if (buffer.readUInt32LE(i) === 0x06054b50) return i;
+  }
+  return -1;
+};
+
+const parseZipCentralDirectory = (buffer) => {
+  const eocdOffset = findZipEocdOffset(buffer);
+  if (eocdOffset < 0) return [];
+  const centralDirSize = buffer.readUInt32LE(eocdOffset + 12);
+  const centralDirOffset = buffer.readUInt32LE(eocdOffset + 16);
+  const end = centralDirOffset + centralDirSize;
+  if (centralDirOffset < 0 || end > buffer.length) return [];
+  const entries = [];
+  let cursor = centralDirOffset;
+  while (cursor + 46 <= end && cursor + 46 <= buffer.length) {
+    if (buffer.readUInt32LE(cursor) !== 0x02014b50) break;
+    const flags = buffer.readUInt16LE(cursor + 8);
+    const method = buffer.readUInt16LE(cursor + 10);
+    const compressedSize = buffer.readUInt32LE(cursor + 20);
+    const uncompressedSize = buffer.readUInt32LE(cursor + 24);
+    const fileNameLength = buffer.readUInt16LE(cursor + 28);
+    const extraLength = buffer.readUInt16LE(cursor + 30);
+    const commentLength = buffer.readUInt16LE(cursor + 32);
+    const localHeaderOffset = buffer.readUInt32LE(cursor + 42);
+    const fileNameStart = cursor + 46;
+    const fileNameEnd = fileNameStart + fileNameLength;
+    if (fileNameEnd > buffer.length) break;
+    const isUtf8 = (flags & 0x0800) !== 0;
+    const fileName = buffer.toString(isUtf8 ? "utf8" : "latin1", fileNameStart, fileNameEnd);
+    entries.push({
+      fileName,
+      method,
+      compressedSize,
+      uncompressedSize,
+      localHeaderOffset
+    });
+    cursor = fileNameEnd + extraLength + commentLength;
+  }
+  return entries;
+};
+
+const extractZipEntryBuffer = (zipBuffer, entry) => {
+  const offset = Number(entry?.localHeaderOffset || 0);
+  if (!Number.isFinite(offset) || offset < 0 || offset + 30 > zipBuffer.length) return Buffer.alloc(0);
+  if (zipBuffer.readUInt32LE(offset) !== 0x04034b50) return Buffer.alloc(0);
+  const fileNameLength = zipBuffer.readUInt16LE(offset + 26);
+  const extraLength = zipBuffer.readUInt16LE(offset + 28);
+  const dataStart = offset + 30 + fileNameLength + extraLength;
+  const dataEnd = dataStart + Number(entry?.compressedSize || 0);
+  if (dataStart < 0 || dataEnd > zipBuffer.length || dataEnd <= dataStart) return Buffer.alloc(0);
+  const chunk = zipBuffer.subarray(dataStart, dataEnd);
+  const method = Number(entry?.method || 0);
+  if (method === 0) return chunk;
+  if (method === 8) {
+    try {
+      return zlib.inflateRawSync(chunk);
+    } catch {
+      return Buffer.alloc(0);
+    }
+  }
+  return Buffer.alloc(0);
+};
+
+const decodeXmlEntities = (value) =>
+  String(value || "")
+    .replace(/&amp;/g, "&")
+    .replace(/&lt;/g, "<")
+    .replace(/&gt;/g, ">")
+    .replace(/&quot;/g, '"')
+    .replace(/&apos;/g, "'")
+    .replace(/&#160;|&nbsp;/g, " ")
+    .replace(/&#(\d+);/g, (_, code) => String.fromCharCode(Number(code)));
+
+const extractWordprocessingText = (xmlText) => {
+  const xml = String(xmlText || "");
+  const matches = [...xml.matchAll(/<w:t[^>]*>([\s\S]*?)<\/w:t>/g)];
+  const lines = matches
+    .map((m) => decodeXmlEntities(m?.[1] || ""))
+    .map((s) => s.replace(/\s+/g, " ").trim())
+    .map((s) => s.replace(/[\u0000-\u001f\u007f]/g, " "))
+    .map((s) => s.replace(/\s+/g, " ").trim())
+    .filter((s) => s && !/<\/?w:[^>]+>/i.test(s) && !/w:rsid|w:rpr|w:ppr|bookmark(start|end)/i.test(s))
+    .filter(Boolean);
+  return lines;
+};
+
+const extractTextFromDotxDocx = (buffer) => {
+  const entries = parseZipCentralDirectory(buffer);
+  if (!entries.length) return [];
+  const wanted = entries.filter((entry) =>
+    /^word\/(document|header\d+|footer\d+)\.xml$/i.test(String(entry.fileName || ""))
+  );
+  const lines = [];
+  for (const entry of wanted) {
+    const raw = extractZipEntryBuffer(buffer, entry);
+    if (!raw.length) continue;
+    const xml = raw.toString("utf8");
+    lines.push(...extractWordprocessingText(xml));
+    if (lines.length >= 300) break;
+  }
+  return lines;
+};
+
+const buildTemplatePreviewPayload = (templateName) => {
+  const baseName = safeTemplateName(templateName);
+  if (!baseName) return { ok: false, errore: "Template non valido" };
+
+  const templatePath = path.join(TEMPLATES_DIR, baseName);
+  if (!templatePath.startsWith(TEMPLATES_DIR)) {
+    return { ok: false, errore: "Percorso template non valido" };
+  }
+  if (!fs.existsSync(templatePath) || !fs.statSync(templatePath).isFile()) {
+    return { ok: false, errore: "Template non trovato" };
+  }
+
+  const ext = path.extname(baseName).toLowerCase();
+  const raw = fs.readFileSync(templatePath);
+  let lines = [];
+  if (ext === ".dotx" || ext === ".docx") {
+    lines = extractTextFromDotxDocx(raw).slice(0, 64);
+  } else if (ext === ".rtf") {
+    const text = extractTextFromRtf(raw.toString("utf8"));
+    lines = text
+      .split(/(?<=[.!?])\s+|\s{2,}/)
+      .map((part) => String(part || "").trim())
+      .filter(Boolean)
+      .slice(0, 64);
+  } else {
+    const text = extractPrintableTextFromBinary(raw);
+    lines = text
+      .split(/(?<=[.!?])\s+|\s{2,}/)
+      .map((part) => String(part || "").trim())
+      .filter(Boolean)
+      .slice(0, 64);
+  }
+
+  const lowered = lines.map((line) => line.toLowerCase());
+  const ddtSignals = ["documento di trasporto", "ddt", "causale", "destinazione", "vettore", "colli", "porto"];
+  const score = ddtSignals.reduce(
+    (acc, token) => acc + (lowered.some((line) => line.includes(token)) ? 1 : 0),
+    0
+  );
+  const likelyDdt = score >= 2;
+
+  return {
+    ok: true,
+    template: baseName,
+    ext,
+    title: lines[0] || baseName,
+    lines,
+    signalScore: score,
+    likelyDdt
+  };
 };
 
 const SCAN_SESSION_TTL_MS = 10 * 60 * 1000;
@@ -407,6 +639,21 @@ const getActiveSerialSet = async (db, pairs) => {
     .toArray();
 
   return new Set(rows.map((r) => `${r?._id?.codice}::${r?._id?.seriale}`));
+};
+
+const getStockByCodes = async (db, codes) => {
+  const uniqueCodes = Array.from(new Set((codes || []).map(normalizeWarehouseCode).filter(Boolean)));
+  if (uniqueCodes.length === 0) return new Map();
+  const rows = await db
+    .collection("warehouse_giacenze")
+    .find({ codiceArticolo: { $in: uniqueCodes } }, { projection: { _id: 0, codiceArticolo: 1, giacenzaFisica: 1, giacenzaFiscale: 1 } })
+    .toArray();
+  return new Map(
+    rows.map((row) => [
+      normalizeWarehouseCode(row.codiceArticolo),
+      { fisica: Number(row.giacenzaFisica || 0), fiscale: Number(row.giacenzaFiscale || 0) }
+    ])
+  );
 };
 
 const ensureIndexes = async () => {
@@ -1167,6 +1414,8 @@ router.get("/fornitori", async (req, res) => {
       indirizzo: row.Indirizzo || "",
       citta: row.Citta || "",
       cap: row.CAP || "",
+      provincia: row.Provincia || "",
+      regione: row.Regione || "",
       note: row.Note || "",
       agenziaRiferimento: row["Agenzia di Riferimento"] || row["Agenzia di riferimento"] || row["Agenzia Riferimento"] || ""
     }));
@@ -1174,6 +1423,118 @@ router.get("/fornitori", async (req, res) => {
     res.json({ tipo, data });
   } catch (error) {
     res.status(500).json({ errore: "Errore caricamento fornitori", dettaglio: error.message });
+  }
+});
+
+router.post("/fornitori", async (req, res) => {
+  try {
+    ensureIndexesInBackground();
+    const db = getWarehouseDb();
+    const payload = req.body || {};
+
+    const tipo = String(payload.tipo || "FORNITORE").trim().toUpperCase();
+    const nominativo = String(payload.nominativo || "").trim();
+    const piva = String(payload.piva || "").trim();
+    const indirizzo = String(payload.indirizzo || "").trim();
+    const citta = String(payload.citta || "").trim();
+    const cap = String(payload.cap || "").trim();
+    const provincia = String(payload.provincia || "").trim().toUpperCase();
+    const regione = String(payload.regione || "").trim();
+    const codFiscale = String(payload.codFiscale || "").trim();
+    const telefoni = String(payload.telefoni || "").trim();
+    const email = String(payload.email || "").trim();
+    const pec = String(payload.pec || "").trim();
+    const note = String(payload.note || "").trim();
+
+    if (!nominativo) return res.status(400).json({ errore: "Nominativo obbligatorio" });
+    if (!piva) return res.status(400).json({ errore: "P.IVA obbligatoria" });
+
+    const duplicate = await db.collection("Cli_For").findOne(
+      { $or: [{ Nominativo: nominativo }, { PIVA: piva }] },
+      { projection: { _id: 0, COD: 1, Nominativo: 1, PIVA: 1 } }
+    );
+    if (duplicate) {
+      return res.status(409).json({ errore: "Anagrafica gia presente con stesso nominativo o P.IVA" });
+    }
+
+    const last = await db
+      .collection("Cli_For")
+      .find({}, { projection: { _id: 0, COD: 1 } })
+      .sort({ COD: -1 })
+      .limit(1)
+      .toArray();
+    const nextCod = Number(last?.[0]?.COD || 0) + 1;
+    const now = new Date();
+
+    const doc = {
+      COD: nextCod,
+      Tipo: tipo || "FORNITORE",
+      Nominativo: nominativo,
+      Indirizzo: indirizzo,
+      Citta: citta,
+      CAP: cap,
+      Provincia: provincia,
+      Regione: regione,
+      PIVA: piva,
+      "Cod Fiscale": codFiscale,
+      telefoni,
+      email1: email,
+      PEC: pec,
+      Note: note,
+      LastEditDate: now,
+      CreationDate: now
+    };
+
+    await db.collection("Cli_For").insertOne(doc);
+
+    return res.status(201).json({
+      ok: true,
+      anagrafica: {
+        cod: nextCod,
+        nominativo,
+        tipo: doc.Tipo,
+        piva,
+        indirizzo,
+        citta,
+        cap,
+        provincia,
+        regione,
+        note
+      }
+    });
+  } catch (error) {
+    return res.status(500).json({ errore: "Errore creazione anagrafica", dettaglio: error.message });
+  }
+});
+
+router.get("/ddt/template-base", async (_req, res) => {
+  try {
+    const picked = pickDdtTemplateBase();
+    return res.json({
+      selected: picked.selected,
+      templatesDir: "backend/src/templates",
+      candidates: picked.candidates
+    });
+  } catch (error) {
+    return res.status(500).json({ errore: "Errore lettura template DDT", dettaglio: error.message });
+  }
+});
+
+router.get("/ddt/template-preview", async (req, res) => {
+  try {
+    const requested = safeTemplateName(req.query.name);
+    const picked = pickDdtTemplateBase();
+    const templateName = requested || picked.selected;
+    if (!templateName) {
+      return res.status(404).json({ errore: "Nessun template disponibile" });
+    }
+    const payload = buildTemplatePreviewPayload(templateName);
+    if (!payload.ok) {
+      return res.status(400).json({ errore: payload.errore || "Template non leggibile" });
+    }
+    return res.json(payload);
+  } catch (error) {
+    return res.status(500).json({ errore: "Errore anteprima template DDT", dettaglio: error.message });
   }
 });
 
@@ -1544,6 +1905,212 @@ router.post("/carico", async (req, res) => {
     res.json({ ok: true, inserted: docs.length, allocazioni: allocazioni.length });
   } catch (error) {
     res.status(500).json({ errore: "Errore salvataggio carico", dettaglio: error.message });
+  }
+});
+
+router.post("/ddt", async (req, res) => {
+  try {
+    ensureIndexesInBackground();
+    const db = getWarehouseDb();
+    const payload = req.body || {};
+    const data = payload.data ? new Date(payload.data) : new Date();
+    const codCliente = Number(payload.codCliente);
+    const codCausale = payload.codCausale !== undefined && payload.codCausale !== null ? Number(payload.codCausale) : null;
+    const numeroDdt = String(payload.numeroDdt || "").trim();
+    const indirizzoDestinazione = String(payload.indirizzoDestinazione || "").trim();
+    const trasportoMezzo = String(payload.trasportoMezzo || "").trim();
+    const note = String(payload.note || "").trim();
+    const note2 = String(payload.note2 || "").trim();
+    const items = Array.isArray(payload.items) ? payload.items : [];
+
+    if (!Number.isFinite(codCliente)) {
+      return res.status(400).json({ errore: "Cliente/riferimento non valido" });
+    }
+    if (!indirizzoDestinazione) {
+      return res.status(400).json({ errore: "Indirizzo destinazione obbligatorio" });
+    }
+    if (!trasportoMezzo) {
+      return res.status(400).json({ errore: "Trasporto a mezzo obbligatorio" });
+    }
+
+    const lastDdt = await db.collection("DDT").find({}, { projection: { _id: 0, cod: 1, Progressivo: 1 } }).sort({ cod: -1 }).limit(1).toArray();
+    const nextCod = Number(lastDdt?.[0]?.cod || 0) + 1;
+    const nextProgressivo = Number(lastDdt?.[0]?.Progressivo || 0) + 1;
+    const now = new Date();
+
+    const ddtDoc = {
+      data: Number.isNaN(data.getTime()) ? now : data,
+      cod: nextCod,
+      "N DDT": numeroDdt || String(nextCod),
+      Cod_Cliente: codCliente,
+      Cod_Azienda: 1,
+      Cod_Causale: Number.isFinite(codCausale) ? codCausale : null,
+      "Indirizzo destinazione": indirizzoDestinazione,
+      "Trasporto a mezzo": trasportoMezzo,
+      LastEditDate: now,
+      CreationDate: now,
+      Progressivo: nextProgressivo,
+      Note: note || null,
+      Note2: note2 || null,
+      Cod_Allegato: null
+    };
+    await db.collection("DDT").insertOne(ddtDoc);
+
+    let insertedRows = 0;
+    if (items.length > 0) {
+      const lastVoc = await db.collection("VociDDT_FM").find({}, { projection: { _id: 0, cod: 1 } }).sort({ cod: -1 }).limit(1).toArray();
+      let nextVocCod = Number(lastVoc?.[0]?.cod || 0) + 1;
+      const vocDocs = items
+        .map((item) => ({
+          "Codice Articolo": String(item?.codiceArticolo || "").trim(),
+          Descrizione: String(item?.descrizione || "").trim(),
+          Seriale: String(item?.seriale || "").trim() || null,
+          "QT movimentata": Math.max(Number(item?.quantita || 0), 0),
+          Cod_DDT: nextCod,
+          cod: nextVocCod++
+        }))
+        .filter((row) => row["Codice Articolo"]);
+      if (vocDocs.length > 0) {
+        await db.collection("VociDDT_FM").insertMany(vocDocs);
+        insertedRows = vocDocs.length;
+      }
+    }
+
+    return res.status(201).json({
+      ok: true,
+      ddt: {
+        cod: nextCod,
+        numeroDdt: ddtDoc["N DDT"],
+        data: ddtDoc.data,
+        codCliente,
+        codCausale: ddtDoc.Cod_Causale,
+        indirizzoDestinazione,
+        trasportoMezzo,
+        noteInterne: [note, note2].filter(Boolean).join(" ").trim(),
+        righe: insertedRows
+      }
+    });
+  } catch (error) {
+    return res.status(500).json({ errore: "Errore creazione DDT", dettaglio: error.message });
+  }
+});
+
+router.post("/scarico", async (req, res) => {
+  try {
+    ensureIndexesInBackground();
+    const db = getWarehouseDb();
+    const { causale, dataMovimento, riferimento, items } = req.body || {};
+    if (!causale || !dataMovimento || !Array.isArray(items) || items.length === 0) {
+      return res.status(400).json({ errore: "Dati scarico incompleti" });
+    }
+
+    const last = await db
+      .collection("Movimenti di magazzino")
+      .find({}, { projection: { cod: 1 } })
+      .sort({ cod: -1 })
+      .limit(1)
+      .toArray();
+    let nextCod = Number(last?.[0]?.cod || 0) + 1;
+
+    const now = new Date();
+    const date = new Date(dataMovimento);
+    const normalizedItems = items.map((item, index) => {
+      const qty = Number(item.quantita);
+      if (!Number.isFinite(qty) || qty < 1) {
+        throw new Error(`Quantita non valida alla riga ${index + 1}: minimo consentito 1`);
+      }
+      const articolo = item.articolo || {};
+      const codiceArticolo = normalizeWarehouseCode(articolo.codiceArticolo || item.codiceArticolo);
+      if (!codiceArticolo) {
+        throw new Error(`Codice articolo mancante alla riga ${index + 1}`);
+      }
+      const seriale = normalizeSerial(item.seriale || item.seriali?.[0] || "");
+      const ammetteSeriale = articolo?.ammetteSeriale === true;
+      if (ammetteSeriale && !seriale) {
+        throw new Error(`Seriale obbligatorio alla riga ${index + 1} per l'articolo ${codiceArticolo}`);
+      }
+      if (ammetteSeriale && qty !== 1) {
+        throw new Error(`Quantita non valida alla riga ${index + 1}: per articoli serializzati usare quantita 1`);
+      }
+      return { item, articolo, qty, codiceArticolo, seriale };
+    });
+
+    const stockByCode = await getStockByCodes(db, normalizedItems.map((row) => row.codiceArticolo));
+    const requestedByCode = new Map();
+    for (const row of normalizedItems) {
+      requestedByCode.set(row.codiceArticolo, Number(requestedByCode.get(row.codiceArticolo) || 0) + row.qty);
+    }
+    for (const [codiceArticolo, requested] of requestedByCode.entries()) {
+      const stock = stockByCode.get(codiceArticolo) || { fisica: 0 };
+      if (requested > Number(stock.fisica || 0)) {
+        throw new Error(`Disponibilita insufficiente per ${codiceArticolo}: richieste ${requested}, disponibili ${Number(stock.fisica || 0)}`);
+      }
+    }
+
+    const activeSerialSet = await getActiveSerialSet(
+      db,
+      normalizedItems.map((row) => ({ codiceArticolo: row.codiceArticolo, seriale: row.seriale }))
+    );
+    for (const [idx, row] of normalizedItems.entries()) {
+      if (!row.seriale) continue;
+      const key = `${row.codiceArticolo}::${row.seriale}`;
+      if (!activeSerialSet.has(key)) {
+        throw new Error(`Seriale non disponibile in magazzino (riga ${idx + 1}): ${row.seriale} per articolo ${row.codiceArticolo}`);
+      }
+    }
+
+    const docs = normalizedItems.map(({ item, articolo, qty, codiceArticolo }) => ({
+      Data: Number.isNaN(date.getTime()) ? now : date,
+      Cod_Causale: Number(causale.cod),
+      Cod_Articolo: codiceArticolo,
+      "QT movimentata": qty,
+      "Part Number": articolo.partNumber || item.partNumber || null,
+      "Costo di Acquisto": articolo.costoAcquisto ?? null,
+      "Prezzo di Vendita": articolo.prezzoVendita ?? null,
+      Cod_DDT: null,
+      Note: item.note || "",
+      cod: nextCod++,
+      cod_azienda: 1,
+      cod_cliente: riferimento?.cod ?? null,
+      Riferimento: riferimento?.nominativo || "",
+      LastEditDate: now,
+      CreationDate: now,
+      Cod_Allegato: null,
+      Cod_Allegato_Foto: null,
+      "UnitÃƒÆ’Ã‚Â  di Misura": articolo.unitaMisura || null
+    }));
+
+    await db.collection("Movimenti di magazzino").insertMany(docs);
+
+    const lastAlloc = await db
+      .collection("Allocazione Magazzino")
+      .find({}, { projection: { cod: 1 } })
+      .sort({ cod: -1 })
+      .limit(1)
+      .toArray();
+    let nextAllocCod = Number(lastAlloc?.[0]?.cod || 0) + 1;
+    const deposito = Number(causale?.depositoFinale ?? causale?.depositoIniziale ?? 0);
+    const allocazioni = normalizedItems.map(({ item, articolo, seriale }, index) => ({
+      cod_articolo: docs[index].Cod_Articolo,
+      Seriale: seriale || null,
+      Scaffale: String(item?.scaffale ?? articolo?.scaffale ?? ""),
+      Riga: String(item?.riga ?? articolo?.riga ?? ""),
+      Colonna: String(item?.colonna ?? articolo?.colonna ?? ""),
+      Note: String(item?.note || ""),
+      cod_movimento: docs[index].cod,
+      cod: nextAllocCod++,
+      Deposito: deposito
+    }));
+    if (allocazioni.length > 0) {
+      await db.collection("Allocazione Magazzino").insertMany(allocazioni);
+    }
+
+    const codes = docs.map((doc) => doc.Cod_Articolo).filter(Boolean);
+    await refreshWarehouseCacheByCodes(db, codes);
+
+    return res.json({ ok: true, inserted: docs.length, allocazioni: allocazioni.length });
+  } catch (error) {
+    return res.status(500).json({ errore: "Errore salvataggio scarico", dettaglio: error.message });
   }
 });
 
