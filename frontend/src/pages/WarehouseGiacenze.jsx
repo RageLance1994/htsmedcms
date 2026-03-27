@@ -1,5 +1,14 @@
 import { Fragment, memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useNavigate } from "react-router-dom";
 import AppLayout from "../components/AppLayout.jsx";
+import ContextMenu from "../components/ui/ContextMenu.jsx";
+import useDebouncedCallback from "../hooks/useDebouncedCallback.js";
+import ankeLogo from "../assets/Anke.ico";
+import htsmedLogo from "../assets/HTS-Med-logo.png";
+import iamerLogo from "../assets/iamers-news.jpg";
+import iso9001Logo from "../assets/91_ISO9001_rgb_120.gif";
+import jasAnzLogo from "../assets/JAS-ANZ-LOGO-MDQMS-e1643900679772.jpg";
+import certExtraLogo from "../assets/download.png";
 
 const API_BASE = import.meta.env.VITE_API_URL || "http://localhost:3000";
 
@@ -7,12 +16,200 @@ const formatNumber = (value) => {
   if (value === null || value === undefined) return "-";
   return Number(value).toLocaleString("it-IT");
 };
+const formatCurrency = (value) => {
+  const num = Number(value);
+  if (!Number.isFinite(num)) return "-";
+  return new Intl.NumberFormat("it-IT", { style: "currency", currency: "EUR" }).format(num);
+};
 
 const getLocalDateTimeValue = () => {
   const now = new Date();
   now.setSeconds(0, 0);
   const local = new Date(now.getTime() - now.getTimezoneOffset() * 60000);
   return local.toISOString().slice(0, 16);
+};
+
+const escapeHtml = (value) =>
+  String(value ?? "")
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;")
+    .replace(/'/g, "&#39;");
+
+const formatDdtDateLabel = (value) => {
+  if (!value) return "-";
+  const parsed = new Date(value);
+  if (Number.isNaN(parsed.getTime())) return String(value);
+  return parsed.toLocaleString("it-IT", {
+    day: "2-digit",
+    month: "2-digit",
+    year: "numeric",
+    hour: "2-digit",
+    minute: "2-digit"
+  });
+};
+
+const buildSupplierDestinationAddress = (supplier) => {
+  const street = String(supplier?.indirizzo || "").trim();
+  const place = [supplier?.cap, supplier?.citta, supplier?.provincia].map((v) => String(v || "").trim()).filter(Boolean).join(" ");
+  return [street, place].filter(Boolean).join(" - ").trim();
+};
+
+const buildDdtA4Html = ({
+  ddt = {},
+  supplier = {},
+  causale = "",
+  items = [],
+  ankeLogoUrl = "",
+  htsmedLogoUrl = "",
+  iamerLogoUrl = "",
+  iso9001LogoUrl = "",
+  jasAnzLogoUrl = "",
+  certExtraLogoUrl = ""
+}) => {
+  const numero = String(ddt.numeroDdt || "-").trim() || "-";
+  const data = formatDdtDateLabel(ddt.data);
+  const cliente = String(supplier.nominativo || "-").trim() || "-";
+  const indirizzo = String(ddt.indirizzoDestinazione || "-").trim() || "-";
+  const trasporto = String(ddt.trasportoMezzo || "-").trim() || "-";
+  const note = [String(ddt.note || "").trim(), String(ddt.note2 || "").trim()].filter(Boolean).join(" - ") || "-";
+  const causaleTrasporto = String(causale || "-").trim() || "-";
+  const piva = String(supplier.piva || "-").trim() || "-";
+  const citta = String(supplier.citta || "").trim();
+  const cap = String(supplier.cap || "").trim();
+  const provincia = String(supplier.provincia || "").trim();
+  const destinatarioRiga2 = [indirizzo, [cap, citta, provincia].filter(Boolean).join(" ")].filter(Boolean).join(" - ");
+  const rows = (Array.isArray(items) ? items : []).map((row) => ({
+    codice: String(row?.codiceArticolo || "-").trim() || "-",
+    descrizione: String(row?.descrizione || "-").trim() || "-",
+    quantita: Math.max(parseInt(row?.quantita, 10) || 0, 0),
+    seriale: String(row?.seriale || "-").trim() || "-"
+  }));
+  const tableRows = rows.length
+    ? rows
+        .map(
+          (row) => `
+          <tr>
+            <td>${escapeHtml(row.codice)}</td>
+            <td>${escapeHtml(row.descrizione)}</td>
+            <td class="num">${escapeHtml(String(row.quantita))}</td>
+            <td>${escapeHtml(row.seriale)}</td>
+          </tr>`
+        )
+        .join("")
+    : `<tr><td colspan="4" class="empty">Nessuna riga articolo.</td></tr>`;
+  return `<!doctype html>
+<html lang="it">
+<head>
+  <meta charset="utf-8" />
+  <title>DDT ${escapeHtml(numero)}</title>
+  <style>
+    @page { size: A4; margin: 14mm; }
+    * { box-sizing: border-box; }
+    html, body { margin: 0; padding: 0; font-family: Arial, Helvetica, sans-serif; color: #111; }
+    body { background: #fff; }
+    .sheet { width: 100%; max-width: 180mm; margin: 0 auto; min-height: calc(297mm - 28mm); display: flex; flex-direction: column; }
+    .top { border: 1px solid #9ca3af; }
+    .logos { display: grid; grid-template-columns: 1fr 1fr; align-items: center; padding: 10px 14px 8px; min-height: 68px; }
+    .logo-left { color: #1789bf; font-weight: 800; font-size: 18px; letter-spacing: 0.03em; }
+    .logo-left img { max-height: 42px; max-width: 150px; object-fit: contain; }
+    .logo-right { text-align: right; color: #1f2937; font-weight: 700; font-size: 16px; }
+    .logo-right img { max-height: 36px; max-width: 120px; object-fit: contain; }
+    .bar { background: #0b8fd1; color: #fff; font-weight: 700; font-style: italic; padding: 3px 6px; font-size: 11px; border-top: 1px solid #6b7280; border-bottom: 1px solid #6b7280; }
+    .bar-grid { display: grid; grid-template-columns: 1fr 110px 86px; align-items: center; }
+    .bar-grid > div:nth-child(2), .bar-grid > div:nth-child(3) { text-align: center; border-left: 1px solid rgba(255,255,255,0.6); }
+    .section-title { background: #0b8fd1; color: #fff; font-weight: 700; font-style: italic; padding: 3px 6px; font-size: 11px; border-top: 1px solid #6b7280; }
+    .cell { border-top: 1px solid #9ca3af; padding: 4px 6px; font-size: 11px; font-style: italic; font-weight: 600; }
+    .cell-grid-2 { display: grid; grid-template-columns: 1fr 180px; gap: 0; }
+    .cell-grid-2 > div:nth-child(2) { text-align: right; border-left: 1px solid #9ca3af; }
+    .table { width: 100%; border-collapse: collapse; font-size: 10px; }
+    .table th, .table td { border: 1px solid #9ca3af; padding: 3px 4px; }
+    .table th { background: #0b8fd1; color: #fff; font-style: italic; font-size: 10px; text-align: left; }
+    .table th.num, .table td.num { text-align: right; }
+    .spacer { flex: 1; min-height: 140px; }
+    .bottom { border: 1px solid #9ca3af; border-top: none; }
+    .note-body { min-height: 44px; padding: 5px 6px; font-size: 11px; font-style: italic; }
+    .transport-sign { display: grid; grid-template-columns: 1fr 1fr; border-top: 1px solid #9ca3af; }
+    .transport-sign > div:first-child { border-right: 1px solid #9ca3af; }
+    .transport-body { padding: 5px 6px; min-height: 52px; font-size: 11px; font-style: italic; }
+    .sign-row { border-top: 1px solid #9ca3af; min-height: 30px; padding: 6px; font-size: 11px; }
+    .footer { margin-top: 8px; border-top: 1px solid #9ca3af; padding-top: 6px; font-size: 9px; color: #1f2937; display: grid; grid-template-columns: 1fr 1fr 170px; gap: 8px; align-items: end; }
+    .ft-logo { text-align: right; display: flex; justify-content: flex-end; align-items: flex-end; gap: 6px; flex-wrap: wrap; }
+    .ft-logo img { max-height: 24px; max-width: 52px; object-fit: contain; }
+    .num { text-align: right; }
+    .empty { text-align: center; color: #555; padding: 6px 0; }
+    @media print { .no-print { display: none !important; } }
+  </style>
+</head>
+<body>
+  <main class="sheet">
+    <section class="top">
+      <div class="logos">
+        <div class="logo-left">${htsmedLogoUrl ? `<img src="${escapeHtml(htsmedLogoUrl)}" alt="HTSMED" />` : "LOGO HTSMED"}</div>
+        <div class="logo-right">${ankeLogoUrl ? `<img src="${escapeHtml(ankeLogoUrl)}" alt="ANKE" />` : "LOGO ANKE"}</div>
+      </div>
+      <div class="bar bar-grid">
+        <div>DOCUMENTO DI TRASPORTO</div>
+        <div>${escapeHtml(numero)}</div>
+        <div>${escapeHtml(data.split(",")[0] || data)}</div>
+      </div>
+      <div class="section-title">MITTENTE/CEDENTE</div>
+      <div class="cell cell-grid-2">
+        <div>HTS MED S.R.L. - Partita IVA: 02759040641</div>
+        <div>Via Napoli 350 - Castellammare di Stabia (NA) 80053</div>
+      </div>
+      <div class="section-title" style="text-align:right;">DESTINATARIO</div>
+      <div class="cell cell-grid-2">
+        <div>${escapeHtml(cliente)} - Partita IVA: ${escapeHtml(piva)}</div>
+        <div>${escapeHtml(destinatarioRiga2 || "-")}</div>
+      </div>
+      <div class="section-title" style="text-align:right;">Indirizzo Destinazione Merce:</div>
+      <div class="cell">${escapeHtml(indirizzo)}</div>
+      <div class="section-title">CAUSALE DI TRASPORTO</div>
+      <div class="cell">${escapeHtml(causaleTrasporto)}</div>
+      <table class="table">
+        <thead>
+          <tr>
+            <th style="width:20%">Codice:</th>
+            <th style="width:62%">Descrizione:</th>
+            <th class="num" style="width:8%">qt</th>
+            <th style="width:10%">Seriale</th>
+          </tr>
+        </thead>
+        <tbody>${tableRows}</tbody>
+      </table>
+    </section>
+    <div class="spacer"></div>
+    <section class="bottom">
+      <div class="section-title">NOTE</div>
+      <div class="note-body">${escapeHtml(note)}</div>
+      <div class="transport-sign">
+        <div>
+          <div class="section-title">TRASPORTO A MEZZO</div>
+          <div class="transport-body">${escapeHtml(trasporto)}</div>
+        </div>
+        <div>
+          <div class="section-title">FIRMA CONDUCENTE</div>
+          <div class="sign-row"></div>
+          <div class="section-title">FIRMA DESTINATARIO</div>
+          <div class="sign-row"></div>
+        </div>
+      </div>
+    </section>
+    <section class="footer">
+      <div><strong>Sede Legale:</strong><br/>Via Napoli 350 - 80053 Castellammare di Stabia (NA)<br/>P.IVA 02759040641</div>
+      <div><strong>Sede Operativa:</strong><br/>Via Napoli 350 - 80053 Castellammare di Stabia (NA)<br/>www.htsmed.com</div>
+      <div class="ft-logo">
+        ${iamerLogoUrl ? `<img src="${escapeHtml(iamerLogoUrl)}" alt="IAMER" />` : ""}
+        ${iso9001LogoUrl ? `<img src="${escapeHtml(iso9001LogoUrl)}" alt="ISO 9001" />` : ""}
+        ${jasAnzLogoUrl ? `<img src="${escapeHtml(jasAnzLogoUrl)}" alt="JAS ANZ" />` : ""}
+        ${certExtraLogoUrl ? `<img src="${escapeHtml(certExtraLogoUrl)}" alt="Certificazioni" />` : ""}
+      </div>
+    </section>
+  </main>
+</body>
+</html>`;
 };
 
 const MEASUREMENT_UNITS = ["QT", "KG", "METRI", "LITRI"];
@@ -42,6 +239,25 @@ const NEW_ARTICLE_COST_CENTER_OPTIONS = [
   "VENDITA RX"
 ];
 const NEW_ARTICLE_UNIT_OPTIONS = ["QT", "LITRI", "KG", "ORE", "METRI"];
+const YEAR_SCOPE_OPTIONS = [2026, 2025, 2024, 2023, 2022, 2021, 2020, 2019, 2018, 2017, 2016, 2015, 2014, 2013, 2009];
+const MOVEMENTS_COLUMN_DEFAULTS = {
+  data: 130,
+  codDdt: 110,
+  codiceArticolo: 150,
+  descrizioneArticolo: 280,
+  descrizioneMovimento: 260,
+  unitaMisura: 90,
+  quantita: 80,
+  costoAcquisto: 130,
+  depositoIniziale: 150,
+  depositoFinale: 150,
+  nominativo: 260,
+  varFisica: 100,
+  varFiscale: 100,
+  prezzoVendita: 150,
+  partNumber: 140,
+  note: 220
+};
 const getInitialNewArticleForm = () => ({
   descrizione: "",
   codiceArticolo: "",
@@ -58,6 +274,21 @@ const getInitialNewArticleForm = () => ({
   alertGiacenza: false,
   giacenzaMinima: "",
   obsoleto: false,
+  note: ""
+});
+const getInitialQuickPartyForm = () => ({
+  tipo: "FORNITORE",
+  nominativo: "",
+  piva: "",
+  indirizzo: "",
+  citta: "",
+  cap: "",
+  provincia: "",
+  regione: "",
+  codFiscale: "",
+  telefoni: "",
+  email: "",
+  pec: "",
   note: ""
 });
 
@@ -140,26 +371,61 @@ const ArticleCatalogRow = memo(function ArticleCatalogRow({
 });
 
 export default function WarehouseGiacenze() {
+  const navigate = useNavigate();
   const initialDprRef = useRef(null);
   const [items, setItems] = useState([]);
   const [page, setPage] = useState(1);
   const [debouncedSearch, setDebouncedSearch] = useState("");
   const [alertsOnly, setAlertsOnly] = useState(false);
+  const [giacenzeScope, setGiacenzeScope] = useState("complessivo");
+  const [referenceYear, setReferenceYear] = useState(new Date().getFullYear());
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
   const [openMenu, setOpenMenu] = useState("");
   const [showFilters, setShowFilters] = useState(false);
+  const [exportModalOpen, setExportModalOpen] = useState(false);
+  const [exportFileType, setExportFileType] = useState("pdf");
+  const [exportPageMode, setExportPageMode] = useState("current");
+  const [exportSelectedPages, setExportSelectedPages] = useState(() => new Set());
+  const [exportLoading, setExportLoading] = useState(false);
+  const [exportError, setExportError] = useState("");
+  const [movementsRowMenu, setMovementsRowMenu] = useState({ open: false, x: 0, y: 0, row: null, allocOpen: false });
+  const [mapWizardOpen, setMapWizardOpen] = useState(false);
+  const [mapBlocks, setMapBlocks] = useState([
+    { id: "M1", label: "M1", x: 40, y: 40, w: 120, h: 46, color: "#4ade80" },
+    { id: "M2", label: "M2", x: 220, y: 40, w: 120, h: 46, color: "#4ade80" },
+    { id: "M3", label: "M3", x: 400, y: 40, w: 120, h: 46, color: "#4ade80" }
+  ]);
+  const [selectedMapBlockId, setSelectedMapBlockId] = useState("M1");
+  const mapDragRef = useRef(null);
   const toolbarRef = useRef(null);
   const movimentiBtnRef = useRef(null);
   const strumentiBtnRef = useRef(null);
   const supplierComboRef = useRef(null);
   const mainSearchInputRef = useRef(null);
+  const movementsSearchInputRef = useRef(null);
   const articleSearchInputRef = useRef(null);
-  const mainSearchDebounceRef = useRef(null);
-  const articleSearchDebounceRef = useRef(null);
+  const giacenzeFetchAbortRef = useRef(null);
+  const movementsFetchAbortRef = useRef(null);
   const supplierDefaultedRef = useRef(false);
+  const rowContextMenuRef = useRef(null);
+  const movementsContextMenuRef = useRef(null);
   const [menuPos, setMenuPos] = useState({ left: 0, top: 0, width: 0 });
   const [rowMenu, setRowMenu] = useState({ open: false, x: 0, y: 0, item: null });
+  const [movementsModalOpen, setMovementsModalOpen] = useState(false);
+  const [movementsFilterCode, setMovementsFilterCode] = useState("");
+  const [movementsRows, setMovementsRows] = useState([]);
+  const [movementsLoading, setMovementsLoading] = useState(false);
+  const [movementsError, setMovementsError] = useState("");
+  const [movementsDebouncedSearch, setMovementsDebouncedSearch] = useState("");
+  const [movementsPage, setMovementsPage] = useState(1);
+  const [movementsLimit, setMovementsLimit] = useState(50);
+  const [movementsTotal, setMovementsTotal] = useState(0);
+  const [movementsSortKey, setMovementsSortKey] = useState("data");
+  const [movementsSortDir, setMovementsSortDir] = useState("desc");
+  const [movementsColumnWidths, setMovementsColumnWidths] = useState(MOVEMENTS_COLUMN_DEFAULTS);
+  const movementsResizeRef = useRef(null);
+  const movementsCacheRef = useRef(new Map());
   const [sortKey, setSortKey] = useState("codiceArticolo");
   const [sortDir, setSortDir] = useState(null);
   const [caricoScaricoMode, setCaricoScaricoMode] = useState("");
@@ -171,6 +437,7 @@ export default function WarehouseGiacenze() {
   const [causaliSoloNonNascoste, setCausaliSoloNonNascoste] = useState(true);
   const [selectedCausale, setSelectedCausale] = useState(null);
   const [caricoWizardOpen, setCaricoWizardOpen] = useState(false);
+  const [scaricoWizardOpen, setScaricoWizardOpen] = useState(false);
   const [caricoDate, setCaricoDate] = useState(() => new Date().toISOString().slice(0, 10));
   const [caricoDateTimeLocal, setCaricoDateTimeLocal] = useState(() => getLocalDateTimeValue());
   const [supplierSearch, setSupplierSearch] = useState("");
@@ -200,82 +467,437 @@ export default function WarehouseGiacenze() {
   const [caricoSaving, setCaricoSaving] = useState(false);
   const [caricoError, setCaricoError] = useState("");
   const [newArticleOpen, setNewArticleOpen] = useState(false);
-  const [newArticleForm, setNewArticleForm] = useState(getInitialNewArticleForm);
+  const newArticleDraftRef = useRef(getInitialNewArticleForm());
   const [newArticleSaving, setNewArticleSaving] = useState(false);
   const [newArticleError, setNewArticleError] = useState("");
+  const [quickPartyOpen, setQuickPartyOpen] = useState(false);
+  const quickPartyDraftRef = useRef(getInitialQuickPartyForm());
+  const [quickPartySaving, setQuickPartySaving] = useState(false);
+  const [quickPartyError, setQuickPartyError] = useState("");
+  const [ddtWizardOpen, setDdtWizardOpen] = useState(false);
+  const [ddtWizardSaving, setDdtWizardSaving] = useState(false);
+  const [ddtWizardError, setDdtWizardError] = useState("");
+  const [ddtWizardForm, setDdtWizardForm] = useState({
+    numeroDdt: "",
+    data: "",
+    indirizzoDestinazione: "",
+    trasportoMezzo: "",
+    note: "",
+    note2: ""
+  });
   const [expandedRows, setExpandedRows] = useState(() => new Set());
   const [serialsByCode, setSerialsByCode] = useState({});
   const [serialsLoading, setSerialsLoading] = useState({});
+  const [scanModal, setScanModal] = useState({
+    open: false,
+    rowId: "",
+    sessionId: "",
+    mobileUrl: "",
+    status: "idle",
+    error: "",
+    seriale: ""
+  });
+  const scanPollRef = useRef(null);
   const ddtPdfInputRef = useRef(null);
+  const [debouncedMainSearchUpdate, cancelDebouncedMainSearchUpdate] = useDebouncedCallback(
+    (next) => setDebouncedSearch(String(next || "").trim()),
+    168
+  );
+  const [debouncedArticleSearchUpdate, cancelDebouncedArticleSearchUpdate] = useDebouncedCallback(
+    (next) => setArticleSearch(String(next || "")),
+    168
+  );
+  const [debouncedMovementsSearchUpdate, cancelDebouncedMovementsSearchUpdate] = useDebouncedCallback(
+    (next) => {
+      setMovementsPage(1);
+      setMovementsDebouncedSearch(String(next || "").trim());
+    },
+    320
+  );
+  const [debouncedSuppliersFetch, cancelDebouncedSuppliersFetch] = useDebouncedCallback((term, tipo) => {
+    fetchSuppliers(String(term || "").trim(), tipo || "fornitori");
+  }, 350);
 
   const [limit, setLimit] = useState(50);
-  const filteredItems = useMemo(() => {
-    const term = debouncedSearch.trim().toLowerCase();
-    return items.filter((item) => {
-      const code = String(item.codiceArticolo || "").toLowerCase();
-      const desc = String(item.descrizione || "").toLowerCase();
-      const min = Number(item.giacenzaMinima || 0);
-      const qty = Number(item.giacenzaFisica || 0);
-      const isAlert = qty < min;
-      const matchesSearch = !term || code.includes(term) || desc.includes(term);
-      return matchesSearch && (!alertsOnly || isAlert);
-    });
-  }, [items, debouncedSearch, alertsOnly]);
-
-  const sortedItems = useMemo(() => {
-    if (!sortDir) return filteredItems;
-    const copy = [...filteredItems];
-    const dir = sortDir === "asc" ? 1 : -1;
-    copy.sort((a, b) => {
-      const aVal =
-        sortKey === "alert"
-          ? Number((a?.giacenzaFisica || 0) < (a?.giacenzaMinima || 0))
-          : a?.[sortKey];
-      const bVal =
-        sortKey === "alert"
-          ? Number((b?.giacenzaFisica || 0) < (b?.giacenzaMinima || 0))
-          : b?.[sortKey];
-      if (aVal === null || aVal === undefined) return 1 * dir;
-      if (bVal === null || bVal === undefined) return -1 * dir;
-      if (typeof aVal === "number" && typeof bVal === "number") {
-        return (aVal - bVal) * dir;
-      }
-      return String(aVal).localeCompare(String(bVal), "it", { numeric: true, sensitivity: "base" }) * dir;
-    });
-    return copy;
-  }, [filteredItems, sortKey, sortDir]);
-
-  const total = sortedItems.length;
-  const effectiveLimit = limit === "all" ? Math.max(total, 1) : limit;
+  const [totalItems, setTotalItems] = useState(0);
+  const total = Number(totalItems || 0);
+  const effectiveLimit = Number(limit || 50);
   const totalPages = useMemo(() => Math.max(Math.ceil(total / effectiveLimit), 1), [total, effectiveLimit]);
-  const pagedItems = useMemo(() => {
-    const start = (page - 1) * effectiveLimit;
-    return sortedItems.slice(start, start + effectiveLimit);
-  }, [sortedItems, page, effectiveLimit]);
+  const pagedItems = items;
+  const exportPageRows = useMemo(() => {
+    return Array.from({ length: totalPages }, (_, idx) => {
+      const pageNumber = idx + 1;
+      const start = (pageNumber - 1) * effectiveLimit;
+      const remaining = Math.max(total - start, 0);
+      const itemsCount = Math.min(remaining, effectiveLimit);
+      return { pageNumber, itemsCount };
+    });
+  }, [totalPages, total, effectiveLimit]);
+  const selectedMapBlock = useMemo(
+    () => mapBlocks.find((row) => row.id === selectedMapBlockId) || null,
+    [mapBlocks, selectedMapBlockId]
+  );
+  const movementsTotalPages = useMemo(
+    () => Math.max(Math.ceil(Number(movementsTotal || 0) / Number(movementsLimit || 1)), 1),
+    [movementsTotal, movementsLimit]
+  );
 
   const hasInvalidMovementQuantities = useMemo(
     () => movementItems.some((item) => !Number.isFinite(Number(item?.quantita)) || Number(item.quantita) < 1),
     [movementItems]
   );
+  const scaricoInsufficientItems = useMemo(() => {
+    if (!scaricoWizardOpen) return [];
+    const qtyByCode = movementItems.reduce((acc, row) => {
+      const code = String(row?.articolo?.codiceArticolo || "");
+      if (!code) return acc;
+      acc[code] = Number(acc[code] || 0) + Math.max(parseInt(row?.quantita, 10) || 0, 0);
+      return acc;
+    }, {});
+    return Object.entries(qtyByCode)
+      .map(([code, qty]) => {
+        const row = movementItems.find((item) => String(item?.articolo?.codiceArticolo || "") === code);
+        const available = Number(row?.articolo?.giacenzaFisica || 0);
+        return { code, qty: Number(qty || 0), available };
+      })
+      .filter((row) => row.qty > row.available);
+  }, [movementItems, scaricoWizardOpen]);
 
   const fetchData = async () => {
+    if (giacenzeFetchAbortRef.current) {
+      giacenzeFetchAbortRef.current.abort();
+    }
+    const controller = new AbortController();
+    giacenzeFetchAbortRef.current = controller;
     setLoading(true);
     setError("");
     try {
       const params = new URLSearchParams({
-        page: "1",
-        limit: "5000",
-        search: ""
+        page: String(page),
+        limit: String(effectiveLimit),
+        search: debouncedSearch,
+        alerts: alertsOnly ? "1" : "0",
+        scope: giacenzeScope,
+        year: String(referenceYear),
+        sortBy: sortKey,
+        sortDir: sortDir || "asc"
       });
-      const res = await fetch(`${API_BASE}/api/warehouse/giacenze?${params.toString()}`);
+      const res = await fetch(`${API_BASE}/api/warehouse/giacenze?${params.toString()}`, { signal: controller.signal });
       if (!res.ok) throw new Error("Errore caricamento dati");
       const payload = await res.json();
       setItems(payload.data || []);
+      setTotalItems(Number(payload.total || 0));
     } catch (err) {
+      if (err?.name === "AbortError") return;
       setError(err.message || "Errore imprevisto");
+      setItems([]);
+      setTotalItems(0);
     } finally {
+      if (giacenzeFetchAbortRef.current === controller) {
+        giacenzeFetchAbortRef.current = null;
+      }
       setLoading(false);
     }
+  };
+
+  const fetchMovements = useCallback(async (options = {}) => {
+    if (!movementsModalOpen) return;
+    if (movementsFetchAbortRef.current) {
+      movementsFetchAbortRef.current.abort();
+    }
+    const controller = new AbortController();
+    movementsFetchAbortRef.current = controller;
+    const force = options?.force === true;
+    const cacheKey = JSON.stringify({
+      page: movementsPage,
+      limit: movementsLimit,
+      search: movementsDebouncedSearch,
+      codiceArticolo: movementsFilterCode || "",
+      sortBy: movementsSortKey,
+      sortDir: movementsSortDir
+    });
+    if (!force && movementsCacheRef.current.has(cacheKey)) {
+      const cached = movementsCacheRef.current.get(cacheKey);
+      setMovementsRows(Array.isArray(cached?.data) ? cached.data : []);
+      setMovementsTotal(Number(cached?.total || 0));
+      return;
+    }
+    setMovementsLoading(true);
+    setMovementsError("");
+    try {
+      const params = new URLSearchParams({
+        page: String(movementsPage),
+        limit: String(movementsLimit),
+        search: movementsDebouncedSearch,
+        sortBy: movementsSortKey,
+        sortDir: movementsSortDir
+      });
+      if (movementsFilterCode) {
+        params.set("codiceArticolo", movementsFilterCode);
+      }
+      const res = await fetch(`${API_BASE}/api/warehouse/movimenti?${params.toString()}`, { signal: controller.signal });
+      if (!res.ok) throw new Error("Errore caricamento movimenti");
+      const payload = await res.json();
+      setMovementsRows(Array.isArray(payload?.data) ? payload.data : []);
+      setMovementsTotal(Number(payload?.total || 0));
+      movementsCacheRef.current.set(cacheKey, {
+        total: Number(payload?.total || 0),
+        data: Array.isArray(payload?.data) ? payload.data : []
+      });
+    } catch (err) {
+      if (err?.name === "AbortError") return;
+      setMovementsError(err.message || "Errore caricamento movimenti");
+      setMovementsRows([]);
+      setMovementsTotal(0);
+    } finally {
+      if (movementsFetchAbortRef.current === controller) {
+        movementsFetchAbortRef.current = null;
+      }
+      setMovementsLoading(false);
+    }
+  }, [movementsModalOpen, movementsPage, movementsLimit, movementsDebouncedSearch, movementsFilterCode, movementsSortKey, movementsSortDir]);
+
+  const openMovementsModal = useCallback((code = "") => {
+    setOpenMenu("");
+    setRowMenu({ open: false, x: 0, y: 0, item: null });
+    setMovementsFilterCode(String(code || "").trim());
+    setMovementsDebouncedSearch("");
+    setMovementsPage(1);
+    setMovementsLimit(50);
+    setMovementsSortKey("data");
+    setMovementsSortDir("desc");
+    setMovementsModalOpen(true);
+    if (movementsSearchInputRef.current) {
+      movementsSearchInputRef.current.value = "";
+    }
+  }, []);
+
+  const openExportModal = () => {
+    setOpenMenu("");
+    setExportFileType("pdf");
+    setExportPageMode("current");
+    setExportSelectedPages(new Set([page]));
+    setExportModalOpen(true);
+  };
+
+  const openMapWizard = useCallback(() => {
+    setOpenMenu("");
+    navigate("/warehouse/mappe");
+  }, [navigate]);
+
+  const closeMovementsContextMenu = () => {
+    setMovementsRowMenu({ open: false, x: 0, y: 0, row: null, allocOpen: false });
+  };
+  const openAllocationMapPanel = useCallback((mode) => {
+    const row = movementsRowMenu?.row;
+    if (!row) return;
+    const params = new URLSearchParams({
+      action: mode === "manage" ? "gestisci-allocazione" : "visualizza-allocazione",
+      movementCod: String(row.codMovimento || ""),
+      codiceArticolo: String(row.codiceArticolo || ""),
+      seriale: String(row.seriale || ""),
+      scaffale: String(row.scaffale || ""),
+      popup: "1"
+    });
+    const url = `/warehouse/mappe?${params.toString()}`;
+    const popupWidth = 1500;
+    const popupHeight = 900;
+    const left = Math.max(0, Math.round(window.screenX + (window.outerWidth - popupWidth) / 2));
+    const top = Math.max(0, Math.round(window.screenY + (window.outerHeight - popupHeight) / 2));
+    const features = [
+      `width=${popupWidth}`,
+      `height=${popupHeight}`,
+      `left=${left}`,
+      `top=${top}`,
+      "popup=yes",
+      "resizable=yes",
+      "scrollbars=yes",
+      "noopener=yes",
+      "noreferrer=yes"
+    ].join(",");
+    window.open(url, `warehouse-map-${mode}`, features);
+    closeMovementsContextMenu();
+  }, [movementsRowMenu]);
+
+  const toggleExportSelectedPage = (pageNumber) => {
+    setExportSelectedPages((prev) => {
+      const next = new Set(prev);
+      if (next.has(pageNumber)) {
+        next.delete(pageNumber);
+      } else {
+        next.add(pageNumber);
+      }
+      return next;
+    });
+  };
+
+  const escapeCsv = (value) => {
+    const str = String(value ?? "");
+    if (/[",;\n\r]/.test(str)) {
+      return `"${str.replace(/"/g, '""')}"`;
+    }
+    return str;
+  };
+
+  const formatExportRows = (rows) =>
+    rows.map((row) => ({
+      codice: row.codiceArticolo || "",
+      descrizione: row.descrizione || "",
+      giacenzaFiscale: Number(row.giacenzaFiscale || 0),
+      giacenzaFisica: Number(row.giacenzaFisica || 0),
+      unitaMisura: row.unitaMisura || "",
+      giacenzaMinima: Number(row.giacenzaMinima || 0),
+      alert: Number(row.giacenzaFisica || 0) < Number(row.giacenzaMinima || 0) ? "SOTTO SCORTA" : "OK"
+    }));
+
+  const downloadBlob = (blob, filename) => {
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = filename;
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    URL.revokeObjectURL(url);
+  };
+
+  const fetchExportPage = async (pageNumber) => {
+    const params = new URLSearchParams({
+      page: String(pageNumber),
+      limit: String(effectiveLimit),
+      search: debouncedSearch,
+      alerts: alertsOnly ? "1" : "0",
+      scope: giacenzeScope,
+      year: String(referenceYear),
+      sortBy: sortKey,
+      sortDir: sortDir || "asc"
+    });
+    const res = await fetch(`${API_BASE}/api/warehouse/giacenze?${params.toString()}`);
+    if (!res.ok) throw new Error("Errore durante il recupero dati export");
+    const payload = await res.json();
+    return Array.isArray(payload?.data) ? payload.data : [];
+  };
+
+  const handleExportDownload = async () => {
+    setExportLoading(true);
+    setExportError("");
+    try {
+      let pagesToFetch = [];
+      if (exportPageMode === "current") {
+        pagesToFetch = [page];
+      } else if (exportPageMode === "selected") {
+        pagesToFetch = Array.from(exportSelectedPages).sort((a, b) => a - b);
+        if (pagesToFetch.length === 0) {
+          throw new Error("Seleziona almeno una pagina da esportare.");
+        }
+      } else {
+        pagesToFetch = Array.from({ length: totalPages }, (_, idx) => idx + 1);
+      }
+
+      const allRows = [];
+      for (const pageNumber of pagesToFetch) {
+        const rows = await fetchExportPage(pageNumber);
+        allRows.push(...rows);
+      }
+
+      const exportRows = formatExportRows(allRows);
+      const timestamp = new Date().toISOString().replace(/[:.]/g, "-");
+      const scopeLabel = giacenzeScope === "annuale" ? `annuale-${referenceYear}` : "complessivo";
+
+      if (exportFileType === "csv") {
+        const headers = ["Codice", "Descrizione", "Giacenza Fiscale", "Giacenza Fisica", "Unita Misura", "Giacenza Minima", "Alert"];
+        const lines = [
+          headers.join(";"),
+          ...exportRows.map((row) =>
+            [
+              escapeCsv(row.codice),
+              escapeCsv(row.descrizione),
+              escapeCsv(row.giacenzaFiscale),
+              escapeCsv(row.giacenzaFisica),
+              escapeCsv(row.unitaMisura),
+              escapeCsv(row.giacenzaMinima),
+              escapeCsv(row.alert)
+            ].join(";")
+          )
+        ];
+        const csv = "\uFEFF" + lines.join("\n");
+        downloadBlob(new Blob([csv], { type: "text/csv;charset=utf-8;" }), `giacenze-${scopeLabel}-${timestamp}.csv`);
+      } else if (exportFileType === "xlsx") {
+        const headers = ["Codice", "Descrizione", "Giacenza Fiscale", "Giacenza Fisica", "Unita Misura", "Giacenza Minima", "Alert"];
+        const tableRows = exportRows
+          .map(
+            (row) =>
+              `<tr><td>${row.codice}</td><td>${row.descrizione}</td><td>${row.giacenzaFiscale}</td><td>${row.giacenzaFisica}</td><td>${row.unitaMisura}</td><td>${row.giacenzaMinima}</td><td>${row.alert}</td></tr>`
+          )
+          .join("");
+        const html = `<!DOCTYPE html><html><head><meta charset="utf-8"></head><body><table><thead><tr>${headers
+          .map((h) => `<th>${h}</th>`)
+          .join("")}</tr></thead><tbody>${tableRows}</tbody></table></body></html>`;
+        downloadBlob(
+          new Blob([html], { type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet;charset=utf-8;" }),
+          `giacenze-${scopeLabel}-${timestamp}.xlsx`
+        );
+      } else {
+        const win = window.open("", "_blank", "noopener,noreferrer,width=1200,height=900");
+        if (!win) throw new Error("Popup bloccato dal browser.");
+        const headers = ["Codice", "Descrizione", "Giacenza Fiscale", "Giacenza Fisica", "Unita Misura", "Giacenza Minima", "Alert"];
+        const bodyRows = exportRows
+          .map(
+            (row) =>
+              `<tr><td>${row.codice}</td><td>${row.descrizione}</td><td>${row.giacenzaFiscale}</td><td>${row.giacenzaFisica}</td><td>${row.unitaMisura}</td><td>${row.giacenzaMinima}</td><td>${row.alert}</td></tr>`
+          )
+          .join("");
+        win.document.write(`<!doctype html><html><head><meta charset="utf-8" /><title>Export giacenze</title><style>body{font-family:Arial,sans-serif;padding:16px}table{width:100%;border-collapse:collapse;font-size:12px}th,td{border:1px solid #ccc;padding:6px;text-align:left}th{background:#f1f1f1}</style></head><body><h2>Giacenze ${scopeLabel}</h2><table><thead><tr>${headers
+          .map((h) => `<th>${h}</th>`)
+          .join("")}</tr></thead><tbody>${bodyRows}</tbody></table></body></html>`);
+        win.document.close();
+        win.focus();
+        win.print();
+      }
+
+      setExportModalOpen(false);
+    } catch (err) {
+      setExportError(err.message || "Errore esportazione");
+    } finally {
+      setExportLoading(false);
+    }
+  };
+
+  const addMapBlock = () => {
+    const nextNumber =
+      mapBlocks.reduce((max, row) => {
+        const parsed = parseInt(String(row.id || "").replace(/[^\d]/g, ""), 10);
+        return Number.isFinite(parsed) ? Math.max(max, parsed) : max;
+      }, 0) + 1;
+    const id = `M${nextNumber}`;
+    const next = { id, label: id, x: 60, y: 140, w: 120, h: 46, color: "#4ade80" };
+    setMapBlocks((prev) => [...prev, next]);
+    setSelectedMapBlockId(id);
+  };
+
+  const removeSelectedMapBlock = () => {
+    if (!selectedMapBlockId) return;
+    setMapBlocks((prev) => prev.filter((row) => row.id !== selectedMapBlockId));
+    setSelectedMapBlockId((prev) => (prev === selectedMapBlockId ? "" : prev));
+  };
+
+  const updateSelectedMapBlock = (field, value) => {
+    if (!selectedMapBlockId) return;
+    setMapBlocks((prev) =>
+      prev.map((row) =>
+        row.id === selectedMapBlockId
+          ? {
+              ...row,
+              [field]:
+                field === "w" || field === "h"
+                  ? Math.max(40, Number(value || 0))
+                  : field === "x" || field === "y"
+                    ? Math.max(0, Number(value || 0))
+                    : value
+            }
+          : row
+      )
+    );
   };
 
   const fetchSerials = async (codice) => {
@@ -295,48 +917,39 @@ export default function WarehouseGiacenze() {
 
   const handleMainSearchInput = (event) => {
     const next = String(event.target.value || "");
-    if (mainSearchDebounceRef.current) {
-      clearTimeout(mainSearchDebounceRef.current);
-    }
-    mainSearchDebounceRef.current = setTimeout(() => {
-      setDebouncedSearch(next);
-      mainSearchDebounceRef.current = null;
-    }, 168);
+    debouncedMainSearchUpdate(next);
   };
 
   const handleArticleSearchInput = (event) => {
     const next = String(event.target.value || "");
-    if (articleSearchDebounceRef.current) {
-      clearTimeout(articleSearchDebounceRef.current);
-    }
-    articleSearchDebounceRef.current = setTimeout(() => {
-      setArticleSearch(next);
-      articleSearchDebounceRef.current = null;
-    }, 168);
+    debouncedArticleSearchUpdate(next);
   };
 
   useEffect(() => {
-    if (!caricoWizardOpen) return;
-    const term = supplierSearch.trim();
-    const timer = setTimeout(() => {
-      fetchSuppliers(term);
-    }, 350);
-    return () => clearTimeout(timer);
-  }, [supplierSearch, caricoWizardOpen]);
+    if (!caricoWizardOpen && !scaricoWizardOpen) return;
+    const mode = scaricoWizardOpen ? "scarico" : "carico";
+    const tipo = getReferenceTipoFromCausale(mode, selectedCausale);
+    debouncedSuppliersFetch(supplierSearch, tipo);
+  }, [supplierSearch, caricoWizardOpen, scaricoWizardOpen, debouncedSuppliersFetch, selectedCausale]);
 
   useEffect(() => {
-    if (!caricoWizardOpen) return;
+    if (!caricoWizardOpen && !scaricoWizardOpen) return;
     const term = articleSearch.trim();
     fetchArticles(term);
-  }, [articleSearch, caricoWizardOpen]);
+  }, [articleSearch, caricoWizardOpen, scaricoWizardOpen]);
 
   useEffect(() => {
     fetchData();
-  }, []);
+  }, [page, effectiveLimit, debouncedSearch, alertsOnly, giacenzeScope, referenceYear, sortKey, sortDir]);
 
   useEffect(() => {
     setPage(1);
-  }, [debouncedSearch, alertsOnly, limit, sortKey, sortDir]);
+  }, [debouncedSearch, alertsOnly, giacenzeScope, referenceYear, limit, sortKey, sortDir]);
+
+  useEffect(() => {
+    if (!movementsModalOpen) return;
+    fetchMovements();
+  }, [movementsModalOpen, fetchMovements]);
 
   useEffect(() => {
     if (page > totalPages) {
@@ -345,7 +958,14 @@ export default function WarehouseGiacenze() {
   }, [page, totalPages]);
 
   useEffect(() => {
-    if (!caricoWizardOpen) {
+    if (!movementsModalOpen) return;
+    if (movementsPage > movementsTotalPages) {
+      setMovementsPage(movementsTotalPages);
+    }
+  }, [movementsModalOpen, movementsPage, movementsTotalPages]);
+
+  useEffect(() => {
+    if (!caricoWizardOpen && !scaricoWizardOpen) {
       setSuppliers([]);
       setArticles([]);
       setSupplierSearch("");
@@ -356,19 +976,31 @@ export default function WarehouseGiacenze() {
       return;
     }
     if (!suppliers.length && !supplierSearch.trim()) {
-      fetchSuppliers("");
+      const mode = scaricoWizardOpen ? "scarico" : "carico";
+      const tipo = getReferenceTipoFromCausale(mode, selectedCausale);
+      fetchSuppliers("", tipo);
     }
     if (!articles.length && !articleSearch.trim()) {
       fetchArticles("");
     }
-  }, [caricoWizardOpen, suppliers.length, articles.length]);
+  }, [caricoWizardOpen, scaricoWizardOpen, suppliers.length, articles.length, selectedCausale]);
 
   useEffect(() => {
     return () => {
-      if (mainSearchDebounceRef.current) clearTimeout(mainSearchDebounceRef.current);
-      if (articleSearchDebounceRef.current) clearTimeout(articleSearchDebounceRef.current);
+      cancelDebouncedMainSearchUpdate();
+      cancelDebouncedArticleSearchUpdate();
+      cancelDebouncedMovementsSearchUpdate();
+      cancelDebouncedSuppliersFetch();
+      if (giacenzeFetchAbortRef.current) giacenzeFetchAbortRef.current.abort();
+      if (movementsFetchAbortRef.current) movementsFetchAbortRef.current.abort();
+      if (scanPollRef.current) clearInterval(scanPollRef.current);
     };
-  }, []);
+  }, [
+    cancelDebouncedMainSearchUpdate,
+    cancelDebouncedArticleSearchUpdate,
+    cancelDebouncedMovementsSearchUpdate,
+    cancelDebouncedSuppliersFetch
+  ]);
 
   useEffect(() => {
     if (selectedArticle?.unitaMisura) {
@@ -387,12 +1019,18 @@ export default function WarehouseGiacenze() {
 
   useEffect(() => {
     if (!newArticleOpen) return;
-    setNewArticleForm(getInitialNewArticleForm());
+    newArticleDraftRef.current = getInitialNewArticleForm();
     setNewArticleError("");
   }, [newArticleOpen]);
 
   useEffect(() => {
-    if (!caricoWizardOpen || !supplierComboOpen) return;
+    if (!quickPartyOpen) return;
+    quickPartyDraftRef.current = getInitialQuickPartyForm();
+    setQuickPartyError("");
+  }, [quickPartyOpen]);
+
+  useEffect(() => {
+    if ((!caricoWizardOpen && !scaricoWizardOpen) || !supplierComboOpen) return;
     const handleOutsideClick = (event) => {
       if (!supplierComboRef.current?.contains(event.target)) {
         setSupplierComboOpen(false);
@@ -409,18 +1047,18 @@ export default function WarehouseGiacenze() {
       window.removeEventListener("mousedown", handleOutsideClick);
       window.removeEventListener("keydown", handleEscape);
     };
-  }, [caricoWizardOpen, supplierComboOpen]);
+  }, [caricoWizardOpen, scaricoWizardOpen, supplierComboOpen]);
 
   useEffect(() => {
-    if (!caricoWizardOpen) return;
+    if (!caricoWizardOpen && !scaricoWizardOpen) return;
     setCaricoDateTimeLocal(getLocalDateTimeValue());
-  }, [caricoWizardOpen]);
+  }, [caricoWizardOpen, scaricoWizardOpen]);
 
   useEffect(() => {
-    if (caricoWizardOpen) {
+    if (caricoWizardOpen || scaricoWizardOpen) {
       supplierDefaultedRef.current = false;
     }
-  }, [caricoWizardOpen]);
+  }, [caricoWizardOpen, scaricoWizardOpen]);
 
   useEffect(() => {
     const updateCompactLayout = () => {
@@ -451,19 +1089,19 @@ export default function WarehouseGiacenze() {
   }, []);
 
   useEffect(() => {
-    if (!caricoWizardOpen) return;
+    if (!caricoWizardOpen && !scaricoWizardOpen) return;
     if (compactCaricoLayout) {
       setDesktopExtraCardsCollapsed(true);
     }
-  }, [caricoWizardOpen, compactCaricoLayout]);
+  }, [caricoWizardOpen, scaricoWizardOpen, compactCaricoLayout]);
 
   useEffect(() => {
-    if (!caricoWizardOpen || suppliers.length === 0) return;
+    if ((!caricoWizardOpen && !scaricoWizardOpen) || suppliers.length === 0) return;
     if (supplierDefaultedRef.current) return;
     setSelectedSupplier(suppliers[0]);
     setSupplierSearch(suppliers[0]?.nominativo || "");
     supplierDefaultedRef.current = true;
-  }, [caricoWizardOpen, suppliers]);
+  }, [caricoWizardOpen, scaricoWizardOpen, suppliers]);
 
   const toggleMenu = (name) => {
     const targetRef = name === "movimenti" ? movimentiBtnRef : strumentiBtnRef;
@@ -537,6 +1175,9 @@ export default function WarehouseGiacenze() {
   };
 
   const openCausaliPicker = (type) => {
+    setCaricoWizardOpen(false);
+    setScaricoWizardOpen(false);
+    resetMovementWizardDraft();
     setCausaliType(type);
     setSelectedCausale(null);
     setCausaliOpen(true);
@@ -631,15 +1272,117 @@ export default function WarehouseGiacenze() {
     );
   };
 
+  const stopScanPolling = () => {
+    if (scanPollRef.current) {
+      clearInterval(scanPollRef.current);
+      scanPollRef.current = null;
+    }
+  };
+
+  const closeScanModal = async () => {
+    stopScanPolling();
+    const sessionId = scanModal.sessionId;
+    setScanModal({
+      open: false,
+      rowId: "",
+      sessionId: "",
+      mobileUrl: "",
+      status: "idle",
+      error: "",
+      seriale: ""
+    });
+    if (sessionId) {
+      await fetch(`${API_BASE}/api/warehouse/scan-sessions/${encodeURIComponent(sessionId)}`, {
+        method: "DELETE"
+      }).catch(() => null);
+    }
+  };
+
+  const startScanPolling = (sessionId, rowId) => {
+    stopScanPolling();
+    scanPollRef.current = setInterval(async () => {
+      try {
+        const res = await fetch(`${API_BASE}/api/warehouse/scan-sessions/${encodeURIComponent(sessionId)}`);
+        const payload = await res.json().catch(() => ({}));
+        if (!res.ok) {
+          throw new Error(payload?.errore || "Sessione di scansione scaduta");
+        }
+        const status = String(payload?.status || "");
+        if (status === "ready") {
+          const seriale = String(payload?.seriale || "").trim();
+          if (seriale) {
+            updateMovementItemField(rowId, "seriale", seriale);
+          }
+          setScanModal((prev) => ({ ...prev, status: "ready", seriale }));
+          stopScanPolling();
+          setTimeout(() => {
+            closeScanModal();
+          }, 900);
+        } else if (status === "error") {
+          setScanModal((prev) => ({ ...prev, status: "error", error: payload?.errore || "Errore scansione" }));
+          stopScanPolling();
+        } else {
+          setScanModal((prev) => ({ ...prev, status: status || "waiting" }));
+        }
+      } catch (err) {
+        setScanModal((prev) => ({ ...prev, status: "error", error: err.message || "Errore scansione" }));
+        stopScanPolling();
+      }
+    }, 1200);
+  };
+
+  const openSerialScan = async (rowId) => {
+    try {
+      setScanModal({
+        open: true,
+        rowId,
+        sessionId: "",
+        mobileUrl: "",
+        status: "starting",
+        error: "",
+        seriale: ""
+      });
+      const res = await fetch(`${API_BASE}/api/warehouse/scan-sessions`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ context: "warehouse-serial-scan" })
+      });
+      const payload = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        throw new Error(payload?.errore || "Errore avvio sessione scan");
+      }
+      const sessionId = String(payload?.sessionId || "");
+      const mobileUrl = String(payload?.mobileUrl || "");
+      if (!sessionId || !mobileUrl) {
+        throw new Error("Sessione scan non valida");
+      }
+      setScanModal((prev) => ({
+        ...prev,
+        sessionId,
+        mobileUrl,
+        status: "waiting",
+        error: ""
+      }));
+      startScanPolling(sessionId, rowId);
+    } catch (err) {
+      setScanModal((prev) => ({
+        ...prev,
+        status: "error",
+        error: err.message || "Errore avvio scansione"
+      }));
+    }
+  };
+
   const updateNewArticleField = (field, value) => {
-    setNewArticleForm((prev) => ({ ...prev, [field]: value }));
+    newArticleDraftRef.current = { ...newArticleDraftRef.current, [field]: value };
   };
 
   const saveNewArticle = async () => {
-    const codice = String(newArticleForm.codiceArticolo || "").trim();
-    const descrizione = String(newArticleForm.descrizione || "").trim();
-    const tipo = String(newArticleForm.tipo || "").trim();
-    const centroDiCosto = String(newArticleForm.centroDiCosto || "").trim();
+    const draft = newArticleDraftRef.current || getInitialNewArticleForm();
+    const codice = String(draft.codiceArticolo || "").trim();
+    const descrizione = String(draft.descrizione || "").trim();
+    const tipo = String(draft.tipo || "").trim();
+    const centroDiCosto = String(draft.centroDiCosto || "").trim();
     if (!codice || !descrizione || !tipo || !centroDiCosto) {
       setNewArticleError("Compila i campi obbligatori: descrizione, codice articolo, tipo, centro di costo.");
       return;
@@ -652,7 +1395,7 @@ export default function WarehouseGiacenze() {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          ...newArticleForm,
+          ...draft,
           codiceArticolo: codice,
           descrizione
         })
@@ -769,55 +1512,253 @@ export default function WarehouseGiacenze() {
     }
   };
 
-  const submitCarico = async () => {
+  const getReferenceTipoFromCausale = (mode, causaleRow) => {
+    if (mode === "carico") return "fornitori";
+    const text = String(causaleRow?.descrizioneMovimento || "").toUpperCase();
+    if (text.includes("FORNITORE")) return "fornitori";
+    if (text.includes("CLIENTE") || text.includes("VENDITA") || text.includes("VISIONE")) return "clienti";
+    return "";
+  };
+
+  const resetMovementWizardDraft = () => {
+    setMovementItems([]);
+    setSelectedMovementItemId(null);
+    setSelectedArticle(null);
+    setArticleRowQuantities({});
+    setEntryQty(1);
+    setEntryUnit("QT");
+    setDdtCode("");
+    setDdtPdfFile(null);
+    setDdtUploadedFiles([]);
+    setOemPartNumber("");
+    setPurchaseCost("");
+    setAiAssistError("");
+    setAiAssistInfo("");
+    setCaricoError("");
+    setSupplierSearch("");
+    setSelectedSupplier(null);
+    setSupplierComboOpen(false);
+    setDesktopExtraCardsCollapsed(false);
+    supplierDefaultedRef.current = false;
+  };
+
+  const openDdtWizardPopup = () => {
+    setDdtWizardError("");
+    setDdtWizardForm({
+      numeroDdt: "",
+      data: caricoDateTimeLocal || getLocalDateTimeValue(),
+      indirizzoDestinazione: buildSupplierDestinationAddress(selectedSupplier),
+      trasportoMezzo: "",
+      note: "",
+      note2: ""
+    });
+    setDdtWizardOpen(true);
+  };
+
+  useEffect(() => {
+    if (!ddtWizardOpen) return;
+    const importedAddress = buildSupplierDestinationAddress(selectedSupplier);
+    setDdtWizardForm((prev) => ({ ...prev, indirizzoDestinazione: importedAddress }));
+  }, [ddtWizardOpen, selectedSupplier?.cod]);
+
+  const saveDdtWizard = async () => {
+    if (!selectedSupplier?.cod) {
+      setDdtWizardError("Seleziona un cliente/fornitore prima di emettere DDT.");
+      return;
+    }
+    const printWindow = window.open("", "_blank", "noopener,noreferrer");
+    if (!printWindow) {
+      setDdtWizardError("Popup bloccato dal browser: abilita i popup per generare il PDF.");
+      return;
+    }
+    setDdtWizardSaving(true);
+    setDdtWizardError("");
+    try {
+      const body = {
+        numeroDdt: String(ddtWizardForm.numeroDdt || "").trim(),
+        data: ddtWizardForm.data || new Date().toISOString(),
+        codCliente: Number(selectedSupplier.cod),
+        codCausale: Number(selectedCausale?.cod || 0) || null,
+        indirizzoDestinazione: String(ddtWizardForm.indirizzoDestinazione || "").trim(),
+        trasportoMezzo: String(ddtWizardForm.trasportoMezzo || "").trim(),
+        note: String(ddtWizardForm.note || "").trim(),
+        note2: String(ddtWizardForm.note2 || "").trim(),
+        items: movementItems.map((row) => ({
+          codiceArticolo: String(row?.articolo?.codiceArticolo || "").trim(),
+          descrizione: String(row?.articolo?.descrizione || "").trim(),
+          seriale: String(row?.seriale || row?.seriali?.[0] || "").trim(),
+          quantita: Math.max(parseInt(row?.quantita, 10) || 0, 0)
+        }))
+      };
+      const res = await fetch(`${API_BASE}/api/warehouse/ddt`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(body)
+      });
+      if (!res.ok) {
+        const payload = await res.json().catch(() => ({}));
+        throw new Error(payload?.errore || "Errore creazione DDT");
+      }
+      const payload = await res.json().catch(() => ({}));
+      const emitted = payload?.ddt || {};
+      const printableDdt = {
+        numeroDdt: emitted?.numeroDdt || body.numeroDdt || "-",
+        data: emitted?.data || body.data,
+        indirizzoDestinazione: body.indirizzoDestinazione,
+        trasportoMezzo: body.trasportoMezzo,
+        note: body.note,
+        note2: body.note2
+      };
+      const html = buildDdtA4Html({
+        ddt: printableDdt,
+        supplier: selectedSupplier,
+        causale: selectedCausale?.descrizioneMovimento || "",
+        items: body.items,
+        ankeLogoUrl: ankeLogo,
+        htsmedLogoUrl: htsmedLogo,
+        iamerLogoUrl: iamerLogo,
+        iso9001LogoUrl: iso9001Logo,
+        jasAnzLogoUrl: jasAnzLogo,
+        certExtraLogoUrl: certExtraLogo
+      });
+      const fileCode = String(printableDdt.numeroDdt || "senza-numero").replace(/[^\w.-]+/g, "_");
+      printWindow.document.open();
+      printWindow.document.write(html);
+      printWindow.document.close();
+      printWindow.document.title = `DDT_${fileCode}`;
+      printWindow.focus();
+      printWindow.print();
+      setDdtWizardOpen(false);
+    } catch (err) {
+      try {
+        printWindow.close();
+      } catch {
+        // no-op
+      }
+      setDdtWizardError(err.message || "Errore creazione DDT");
+    } finally {
+      setDdtWizardSaving(false);
+    }
+  };
+
+  const submitMovement = async (mode) => {
     if (!selectedCausale || !selectedSupplier || movementItems.length === 0) return;
     if (hasInvalidMovementQuantities) {
       setCaricoError("Quantita non valida: ogni riga deve avere almeno 1.");
       return;
     }
+    if (mode === "scarico") {
+      const qtyByCode = movementItems.reduce((acc, row) => {
+        const code = String(row?.articolo?.codiceArticolo || "");
+        if (!code) return acc;
+        acc[code] = Number(acc[code] || 0) + Math.max(parseInt(row?.quantita, 10) || 0, 0);
+        return acc;
+      }, {});
+      const insufficient = Object.entries(qtyByCode).find(([code, qty]) => {
+        const row = movementItems.find((item) => String(item?.articolo?.codiceArticolo || "") === code);
+        const available = Number(row?.articolo?.giacenzaFisica || 0);
+        return qty > available;
+      });
+      if (insufficient) {
+        setCaricoError(`Quantita insufficiente per ${insufficient[0]}: richiesta ${insufficient[1]}, disponibile ${Number(movementItems.find((item) => String(item?.articolo?.codiceArticolo || "") === insufficient[0])?.articolo?.giacenzaFisica || 0)}.`);
+        return;
+      }
+    }
+
     setCaricoSaving(true);
     setCaricoError("");
     try {
-      const res = await fetch(`${API_BASE}/api/warehouse/carico`, {
+      const endpoint = mode === "scarico" ? "scarico" : "carico";
+      const body = {
+        causale: selectedCausale,
+        dataMovimento: caricoDate,
+        items: movementItems.map((row) => {
+          const seriale = String(row?.seriale || row?.seriali?.[0] || "").trim();
+          return {
+            ...row,
+            seriale,
+            seriali: seriale ? [seriale] : [],
+            scaffale: String(row?.scaffale || ""),
+            riga: String(row?.riga || ""),
+            colonna: String(row?.colonna || ""),
+            note: String(row?.note || "")
+          };
+        })
+      };
+      if (mode === "scarico") {
+        body.riferimento = selectedSupplier;
+      } else {
+        body.fornitore = selectedSupplier;
+      }
+
+      const res = await fetch(`${API_BASE}/api/warehouse/${endpoint}`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          causale: selectedCausale,
-          dataMovimento: caricoDate,
-          fornitore: selectedSupplier,
-          items: movementItems.map((row) => {
-            const seriale = String(row?.seriale || row?.seriali?.[0] || "").trim();
-            return {
-              ...row,
-              seriale,
-              seriali: seriale ? [seriale] : [],
-              scaffale: String(row?.scaffale || ""),
-              riga: String(row?.riga || ""),
-              colonna: String(row?.colonna || ""),
-              note: String(row?.note || "")
-            };
-          })
-        })
+        body: JSON.stringify(body)
       });
       if (!res.ok) {
         const payload = await res.json().catch(() => ({}));
-        throw new Error(payload?.errore || "Errore salvataggio carico");
+        throw new Error(payload?.errore || `Errore salvataggio ${mode}`);
       }
+      movementsCacheRef.current.clear();
       setCaricoWizardOpen(false);
-      fetchData({ page, limit, search: debouncedSearch, alerts: alertsOnly });
+      setScaricoWizardOpen(false);
+      resetMovementWizardDraft();
+      fetchData();
     } catch (err) {
-      setCaricoError(err.message || "Errore salvataggio carico");
+      setCaricoError(err.message || `Errore salvataggio ${mode}`);
     } finally {
       setCaricoSaving(false);
     }
   };
 
-  const fetchSuppliers = async (term = "") => {
+  const updateQuickPartyField = (field, value) => {
+    quickPartyDraftRef.current = { ...quickPartyDraftRef.current, [field]: value };
+  };
+
+  const saveQuickParty = async () => {
+    const draft = quickPartyDraftRef.current || getInitialQuickPartyForm();
+    const nominativo = String(draft.nominativo || "").trim();
+    const piva = String(draft.piva || "").trim();
+    if (!nominativo || !piva) {
+      setQuickPartyError("Compila almeno nominativo e P.IVA.");
+      return;
+    }
+    setQuickPartySaving(true);
+    setQuickPartyError("");
+    try {
+      const res = await fetch(`${API_BASE}/api/warehouse/fornitori`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ ...draft, nominativo, piva })
+      });
+      if (!res.ok) {
+        const payload = await res.json().catch(() => ({}));
+        throw new Error(payload?.errore || "Errore creazione anagrafica");
+      }
+      const payload = await res.json();
+      const created = payload?.anagrafica || null;
+      const mode = scaricoWizardOpen ? "scarico" : "carico";
+      const tipo = getReferenceTipoFromCausale(mode, selectedCausale);
+      await fetchSuppliers("", tipo);
+      if (created) {
+        setSelectedSupplier(created);
+        setSupplierSearch(created.nominativo || "");
+      }
+      setQuickPartyOpen(false);
+    } catch (err) {
+      setQuickPartyError(err.message || "Errore creazione anagrafica");
+    } finally {
+      setQuickPartySaving(false);
+    }
+  };
+
+  const fetchSuppliers = async (term = "", tipoOverride = "fornitori") => {
     setSuppliersLoading(true);
     try {
       const params = new URLSearchParams({
         search: term,
-        tipo: "fornitori",
+        tipo: String(tipoOverride || ""),
         limit: term ? "500" : "1500"
       });
       const res = await fetch(`${API_BASE}/api/warehouse/fornitori?${params.toString()}`);
@@ -869,16 +1810,77 @@ export default function WarehouseGiacenze() {
     if (sortKey !== key || !sortDir) return "fa-sort";
     return sortDir === "asc" ? "fa-sort-up" : "fa-sort-down";
   };
+  const movementsSortIndicator = (key) => {
+    if (movementsSortKey !== key) return "fa-sort";
+    return movementsSortDir === "asc" ? "fa-sort-up" : "fa-sort-down";
+  };
+  const handleMovementsSort = (key) => {
+    if (movementsSortKey === key) {
+      setMovementsSortDir((prev) => (prev === "asc" ? "desc" : "asc"));
+      setMovementsPage(1);
+      return;
+    }
+    setMovementsSortKey(key);
+    setMovementsSortDir("asc");
+    setMovementsPage(1);
+  };
+  const startMovementColumnResize = (event, key) => {
+    event.preventDefault();
+    event.stopPropagation();
+    const initialWidth = Number(movementsColumnWidths?.[key] || MOVEMENTS_COLUMN_DEFAULTS[key] || 120);
+    movementsResizeRef.current = { key, startX: event.clientX, startWidth: initialWidth };
+    const onMouseMove = (moveEvent) => {
+      if (!movementsResizeRef.current) return;
+      const { key: activeKey, startX, startWidth } = movementsResizeRef.current;
+      const delta = moveEvent.clientX - startX;
+      const next = Math.max(70, startWidth + delta);
+      setMovementsColumnWidths((prev) => ({ ...prev, [activeKey]: next }));
+    };
+    const onMouseUp = () => {
+      movementsResizeRef.current = null;
+      window.removeEventListener("mousemove", onMouseMove);
+      window.removeEventListener("mouseup", onMouseUp);
+    };
+    window.addEventListener("mousemove", onMouseMove);
+    window.addEventListener("mouseup", onMouseUp);
+  };
 
   useEffect(() => {
-    const closeRowMenu = () => setRowMenu({ open: false, x: 0, y: 0, item: null });
+    const closeRowMenu = (event) => {
+      const target = event?.target;
+      if (target instanceof Node) {
+        if (rowContextMenuRef.current?.contains(target)) return;
+        if (movementsContextMenuRef.current?.contains(target)) return;
+      }
+      setRowMenu({ open: false, x: 0, y: 0, item: null });
+      setMovementsRowMenu({ open: false, x: 0, y: 0, row: null, allocOpen: false });
+    };
     window.addEventListener("resize", closeRowMenu);
     window.addEventListener("scroll", closeRowMenu, true);
-    document.addEventListener("mousedown", closeRowMenu);
+    document.addEventListener("mousedown", closeRowMenu, true);
     return () => {
       window.removeEventListener("resize", closeRowMenu);
       window.removeEventListener("scroll", closeRowMenu, true);
-      document.removeEventListener("mousedown", closeRowMenu);
+      document.removeEventListener("mousedown", closeRowMenu, true);
+    };
+  }, []);
+
+  useEffect(() => {
+    const onMove = (event) => {
+      if (!mapDragRef.current) return;
+      const { id, offsetX, offsetY } = mapDragRef.current;
+      const nextX = Math.max(0, event.clientX - offsetX);
+      const nextY = Math.max(0, event.clientY - offsetY);
+      setMapBlocks((prev) => prev.map((row) => (row.id === id ? { ...row, x: nextX, y: nextY } : row)));
+    };
+    const onUp = () => {
+      mapDragRef.current = null;
+    };
+    window.addEventListener("mousemove", onMove);
+    window.addEventListener("mouseup", onUp);
+    return () => {
+      window.removeEventListener("mousemove", onMove);
+      window.removeEventListener("mouseup", onUp);
     };
   }, []);
 
@@ -930,6 +1932,20 @@ export default function WarehouseGiacenze() {
                       if (item.label === "Carico Merce") {
                         setOpenMenu("");
                         openCausaliPicker("carico");
+                        return;
+                      }
+                      if (item.label === "Scarico Merce") {
+                        setOpenMenu("");
+                        openCausaliPicker("scarico");
+                        return;
+                      }
+                      if (item.label === "Lista Movimenti") {
+                        openMovementsModal("");
+                        return;
+                      }
+                      if (item.label === "Emissione DDT") {
+                        setOpenMenu("");
+                        openDdtWizardPopup();
                       }
                     }}
                   >
@@ -965,12 +1981,23 @@ export default function WarehouseGiacenze() {
                   { label: "Pianta Magazzino", icon: "fa-map" },
                   { label: "Controlla Allocazione", icon: "fa-clipboard-check" },
                   { label: "Controlla Contiguita Seriali", icon: "fa-link" },
-                  { label: "Valorizzazione", icon: "fa-scale-balanced" }
+                  { label: "Valorizzazione", icon: "fa-scale-balanced" },
+                  { label: "Scarica", icon: "fa-download" }
                 ].map((item) => (
                   <button
                     key={item.label}
                     type="button"
                     className="flex w-full items-center gap-2 rounded-md px-3 py-2 text-sm whitespace-nowrap hover:bg-[var(--hover)]"
+                    onClick={() => {
+                      if (item.label === "Pianta Magazzino") {
+                        openMapWizard();
+                        return;
+                      }
+                      if (item.label === "Scarica") {
+                        openExportModal();
+                        return;
+                      }
+                    }}
                   >
                     <i className={`fa-solid ${item.icon} text-[12px] text-[var(--muted)]`} aria-hidden="true" />
                     {item.label}
@@ -984,10 +2011,55 @@ export default function WarehouseGiacenze() {
 
       <section className="warehouse-section flex min-h-0 flex-1 flex-col rounded-lg border border-[var(--border)] bg-[var(--surface)] p-3 sm:p-4 min-w-0 w-full max-w-full overflow-x-hidden">
         <div className="min-w-0">
-          <div className="flex min-w-0 items-end">
-            <div className="flex-1 min-w-0">
-              <label className="text-xs uppercase tracking-[0.2em] text-[var(--muted)]">Ricerca</label>
-              <div className="mt-2 flex items-center rounded-md border border-[var(--border)] bg-[var(--surface)] px-3 py-2">
+          <div className="flex flex-wrap items-center justify-between gap-3">
+            <div className="relative flex h-10 w-full max-w-[360px] rounded-md border border-[var(--border)] bg-[var(--surface-strong)] p-1">
+              <span
+                aria-hidden="true"
+                className={`pointer-events-none absolute left-1 top-1 h-[calc(100%-8px)] w-[calc(50%-4px)] rounded-md bg-emerald-500/20 transition-transform duration-200 ${
+                  giacenzeScope === "complessivo" ? "translate-x-0" : "translate-x-full"
+                }`}
+              />
+              <button
+                type="button"
+                onClick={() => setGiacenzeScope("complessivo")}
+                className={`relative z-[1] h-full flex-1 rounded-md text-[11px] font-semibold uppercase tracking-[0.16em] transition ${
+                  giacenzeScope === "complessivo" ? "text-emerald-300" : "text-[var(--muted)]"
+                }`}
+              >
+                Complessivo
+              </button>
+              <button
+                type="button"
+                onClick={() => setGiacenzeScope("annuale")}
+                className={`relative z-[1] h-full flex-1 rounded-md text-[11px] font-semibold uppercase tracking-[0.16em] transition ${
+                  giacenzeScope === "annuale" ? "text-emerald-300" : "text-[var(--muted)]"
+                }`}
+              >
+                Per anno
+              </button>
+            </div>
+
+            {giacenzeScope === "annuale" ? (
+              <label className="flex items-center gap-2 text-xs text-[var(--muted)]">
+                <span>Anno di riferimento</span>
+                <select
+                  value={referenceYear}
+                  onChange={(event) => setReferenceYear(parseInt(event.target.value, 10))}
+                  className="h-9 w-28 rounded-md border border-[var(--border)] bg-[var(--surface)] px-2 text-xs text-[var(--page-fg)]"
+                >
+                  {YEAR_SCOPE_OPTIONS.map((year) => (
+                    <option key={year} value={year}>
+                      {year}
+                    </option>
+                  ))}
+                </select>
+              </label>
+            ) : null}
+          </div>
+
+          <div className="mt-2 flex min-w-0 flex-wrap items-center gap-3">
+            <div className="min-w-0 flex-1">
+              <div className="flex items-center rounded-md border border-[var(--border)] bg-[var(--surface)] px-3 py-2">
                 <button
                   type="button"
                   onClick={() => fetchData()}
@@ -1030,6 +2102,42 @@ export default function WarehouseGiacenze() {
                   <i className="fa-solid fa-filter text-[12px]" aria-hidden="true" />
                 </button>
               </div>
+            </div>
+            <div className="flex shrink-0 items-center gap-2 text-sm">
+              <div className="flex items-center gap-2 text-xs text-[var(--muted)]">
+                <span>Righe</span>
+                <select
+                  value={limit}
+                  onChange={(event) => {
+                    setLimit(parseInt(event.target.value, 10));
+                  }}
+                  className="rounded-md border border-[var(--border)] bg-[var(--surface)] px-2 py-1 text-xs text-[var(--page-fg)]"
+                >
+                  <option value="10">10</option>
+                  <option value="20">20</option>
+                  <option value="50">50</option>
+                  <option value="100">100</option>
+                </select>
+              </div>
+              <button
+                type="button"
+                disabled={page === 1}
+                onClick={() => setPage((prev) => Math.max(prev - 1, 1))}
+                className="rounded-md border border-[var(--border)] px-3 py-1 disabled:opacity-50"
+              >
+                Prev
+              </button>
+              <span className="text-[var(--muted)]">
+                {page} / {totalPages}
+              </span>
+              <button
+                type="button"
+                disabled={page >= totalPages}
+                onClick={() => setPage((prev) => Math.min(prev + 1, totalPages))}
+                className="rounded-md border border-[var(--border)] px-3 py-1 disabled:opacity-50"
+              >
+                Next
+              </button>
             </div>
           </div>
         </div>
@@ -1083,55 +2191,25 @@ export default function WarehouseGiacenze() {
           </div>
         ) : null}
 
-        <div className="mt-4 flex items-center justify-between gap-3">
+        <div className="mt-3 flex items-center justify-between gap-3">
           <p className="text-sm text-[var(--muted)]">
-            Totale articoli: <span className="text-[var(--page-fg)]">{formatNumber(total)}</span>
+            Da{" "}
+            <span className="text-[var(--page-fg)]">
+              {total === 0 ? 0 : formatNumber((page - 1) * effectiveLimit + 1)}
+            </span>{" "}
+            a{" "}
+            <span className="text-[var(--page-fg)]">
+              {total === 0 ? 0 : formatNumber(Math.min(page * effectiveLimit, total))}
+            </span>{" "}
+            articoli di <span className="text-[var(--page-fg)]">{formatNumber(total)}</span>
           </p>
-          <div className="flex items-center gap-2 text-sm">
-            <div className="flex items-center gap-2 text-xs text-[var(--muted)]">
-              <span>Righe</span>
-              <select
-                value={limit}
-                onChange={(event) => {
-                  const value = event.target.value;
-                  setLimit(value === "all" ? "all" : parseInt(value, 10));
-                }}
-                className="rounded-md border border-[var(--border)] bg-[var(--surface)] px-2 py-1 text-xs text-[var(--page-fg)]"
-              >
-                <option value="10">10</option>
-                <option value="20">20</option>
-                <option value="50">50</option>
-                <option value="100">100</option>
-                <option value="all">Tutti</option>
-              </select>
-            </div>
-            <button
-              type="button"
-              disabled={page === 1}
-              onClick={() => setPage((prev) => Math.max(prev - 1, 1))}
-              className="rounded-md border border-[var(--border)] px-3 py-1 disabled:opacity-50"
-            >
-              Prev
-            </button>
-            <span className="text-[var(--muted)]">
-              {page} / {totalPages}
-            </span>
-            <button
-              type="button"
-              disabled={page >= totalPages}
-              onClick={() => setPage((prev) => Math.min(prev + 1, totalPages))}
-              className="rounded-md border border-[var(--border)] px-3 py-1 disabled:opacity-50"
-            >
-              Next
-            </button>
-          </div>
         </div>
 
         {error ? <p className="mt-4 text-sm text-rose-500">{error}</p> : null}
 
         <div className="mt-4 min-h-0 flex-1 overflow-auto rounded-md border border-[var(--border)]">
           <div className="w-full">
-            <table className="warehouse-table table-dense w-full table-fixed border-collapse text-sm">
+            <table className="warehouse-table warehouse-column-stripes table-dense w-full table-fixed border-collapse text-xs">
               <thead className="sticky top-0 z-10 bg-[var(--surface-strong)]">
                 <tr className="text-left text-[10px] uppercase tracking-[0.2em] text-[var(--muted)]">
                   <th className="h-10 px-3 w-10"></th>
@@ -1239,7 +2317,7 @@ export default function WarehouseGiacenze() {
                           {canExpand ? (
                             <button
                               type="button"
-                              className="flex h-6 w-6 items-center justify-center rounded-md border border-[var(--border)] text-[var(--muted)] hover:bg-[var(--hover)]"
+                              className="flex h-5 w-5 items-center justify-center rounded-md border border-[var(--border)] text-[var(--muted)] hover:bg-[var(--hover)]"
                               onClick={(event) => {
                                 event.stopPropagation();
                                 if (!expanded) {
@@ -1269,7 +2347,7 @@ export default function WarehouseGiacenze() {
                         <td className="px-3 py-2">{formatNumber(item.giacenzaMinima)}</td>
                         <td className="px-3 py-2">
                           <span
-                            className={`inline-flex items-center rounded-full px-2 py-1 text-xs ${
+                            className={`inline-flex items-center rounded-full px-2 py-0.5 text-[11px] ${
                               alert ? "bg-rose-100 text-rose-700" : "bg-emerald-100 text-emerald-700"
                             }`}
                           >
@@ -1328,19 +2406,27 @@ export default function WarehouseGiacenze() {
         </div>
       </section>
 
-      {rowMenu.open ? (
-        <div
-          className="fixed z-50 w-52 rounded-lg border border-[var(--border)] bg-[var(--surface)] p-2 shadow-lg"
-          style={{ left: rowMenu.x, top: rowMenu.y }}
-          onMouseDown={(event) => event.stopPropagation()}
-          onClick={(event) => event.stopPropagation()}
-        >
+      <div ref={rowContextMenuRef}>
+      <ContextMenu
+        open={rowMenu.open}
+        x={rowMenu.x}
+        y={rowMenu.y}
+        className="z-50 w-52 rounded-lg border border-[var(--border)] bg-[var(--surface)] p-2 shadow-lg"
+      >
           <button
             type="button"
             className="flex w-full items-center gap-2 rounded-md px-3 py-2 text-sm hover:bg-[var(--hover)]"
           >
             <i className="fa-solid fa-eye text-[12px] text-[var(--muted)]" aria-hidden="true" />
             Visualizza
+          </button>
+          <button
+            type="button"
+            className="flex w-full items-center gap-2 rounded-md px-3 py-2 text-sm hover:bg-[var(--hover)]"
+            onClick={() => openMovementsModal(rowMenu.item?.codiceArticolo || "")}
+          >
+            <i className="fa-solid fa-list text-[12px] text-[var(--muted)]" aria-hidden="true" />
+            Vedi movimenti
           </button>
           <div className="my-1 h-px w-full bg-[var(--border)]" aria-hidden="true" />
           <button
@@ -1387,8 +2473,689 @@ export default function WarehouseGiacenze() {
             <i className="fa-solid fa-plus text-[12px] text-[var(--muted)]" aria-hidden="true" />
             Nuovo
           </button>
+      </ContextMenu>
+      </div>
+
+      {exportModalOpen ? (
+        <div className="fixed inset-0 z-[62] flex items-center justify-center bg-black/70 px-3 py-4" onMouseDown={() => setExportModalOpen(false)}>
+          <div
+            className="w-full max-w-lg rounded-xl border border-[var(--border)] bg-[var(--surface)] shadow-xl"
+            onMouseDown={(event) => event.stopPropagation()}
+          >
+            <div className="flex items-start justify-between gap-4 border-b border-[var(--border)] px-4 py-3">
+              <div>
+                <p className="text-xs uppercase tracking-[0.2em] text-[var(--muted)]">Esportazione</p>
+                <h2 className="mt-1 text-lg font-semibold">Scarica dati giacenze</h2>
+              </div>
+              <button
+                type="button"
+                className="flex h-9 w-9 items-center justify-center rounded-md border border-[var(--border)] text-[var(--muted)] hover:bg-[var(--hover)]"
+                onClick={() => setExportModalOpen(false)}
+                aria-label="Chiudi export"
+              >
+                <i className="fa-solid fa-xmark" aria-hidden="true" />
+              </button>
+            </div>
+
+            <div className="space-y-4 px-4 py-4">
+              <label className="block text-sm">
+                <span className="text-xs uppercase tracking-[0.2em] text-[var(--muted)]">File type</span>
+                <select
+                  value={exportFileType}
+                  onChange={(event) => setExportFileType(event.target.value)}
+                  className="mt-2 h-10 w-full rounded-md border border-[var(--border)] bg-[var(--surface)] px-3 text-sm"
+                >
+                  <option value="pdf">📕 PDF</option>
+                  <option value="csv">📗 CSV</option>
+                  <option value="xlsx">📘 XLSX</option>
+                </select>
+              </label>
+
+              <label className="block text-sm">
+                <span className="text-xs uppercase tracking-[0.2em] text-[var(--muted)]">Pagine</span>
+                <select
+                  value={exportPageMode}
+                  onChange={(event) => {
+                    const mode = String(event.target.value || "current");
+                    setExportPageMode(mode);
+                    if (mode === "current") {
+                      setExportSelectedPages(new Set([page]));
+                    }
+                  }}
+                  className="mt-2 h-10 w-full rounded-md border border-[var(--border)] bg-[var(--surface)] px-3 text-sm"
+                >
+                  <option value="current">pagina corrente</option>
+                  <option value="selected">seleziona pagine</option>
+                  <option value="all">tutte le pagine</option>
+                </select>
+              </label>
+
+              {exportPageMode === "selected" ? (
+                <div className="rounded-md border border-[var(--border)]">
+                  <div className="max-h-52 overflow-auto">
+                    <table className="table-dense w-full text-xs">
+                      <thead className="sticky top-0 bg-[var(--surface-strong)] text-[10px] uppercase tracking-[0.16em] text-[var(--muted)]">
+                        <tr className="text-left">
+                          <th className="px-3 py-2">Sel</th>
+                          <th className="px-3 py-2">Pagina</th>
+                          <th className="px-3 py-2">Elementi</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {exportPageRows.map((row) => (
+                          <tr key={`export-page-${row.pageNumber}`} className="border-t border-[var(--border)]">
+                            <td className="px-3 py-2">
+                              <input
+                                type="checkbox"
+                                checked={exportSelectedPages.has(row.pageNumber)}
+                                onChange={() => toggleExportSelectedPage(row.pageNumber)}
+                                className="h-4 w-4"
+                              />
+                            </td>
+                            <td className="px-3 py-2">{row.pageNumber}</td>
+                            <td className="px-3 py-2">{formatNumber(row.itemsCount)}</td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                </div>
+              ) : null}
+            </div>
+
+            <div className="flex items-center justify-end gap-2 border-t border-[var(--border)] px-4 py-3">
+              <button
+                type="button"
+                className="rounded-md border border-[var(--border)] px-4 py-2 text-sm"
+                onClick={() => setExportModalOpen(false)}
+                disabled={exportLoading}
+              >
+                Chiudi
+              </button>
+              <button
+                type="button"
+                className="rounded-md bg-emerald-500 px-4 py-2 text-sm font-semibold text-white hover:bg-emerald-600 disabled:cursor-not-allowed disabled:opacity-60"
+                onClick={handleExportDownload}
+                disabled={exportLoading}
+              >
+                {exportLoading ? "Esportazione..." : "Scarica"}
+              </button>
+            </div>
+            {exportError ? <p className="px-4 pb-3 text-sm text-rose-400">{exportError}</p> : null}
+          </div>
         </div>
       ) : null}
+
+      {mapWizardOpen ? (
+        <div className="fixed inset-0 z-[63] flex items-center justify-center bg-black/75 px-3 py-3" onMouseDown={() => setMapWizardOpen(false)}>
+          <div
+            className="flex h-[92dvh] w-[96vw] max-w-[1600px] min-h-0 flex-col overflow-hidden rounded-xl border border-[var(--border)] bg-[var(--surface)] shadow-2xl"
+            onMouseDown={(event) => event.stopPropagation()}
+          >
+            <div className="flex items-start justify-between gap-4 border-b border-[var(--border)] px-4 py-3">
+              <div>
+                <p className="text-xs uppercase tracking-[0.2em] text-[var(--muted)]">Pianta magazzino</p>
+                <h2 className="mt-1 text-lg font-semibold">Wizard creazione scaffalatura</h2>
+              </div>
+              <button
+                type="button"
+                className="flex h-9 w-9 items-center justify-center rounded-md border border-[var(--border)] text-[var(--muted)] hover:bg-[var(--hover)]"
+                onClick={() => setMapWizardOpen(false)}
+              >
+                <i className="fa-solid fa-xmark" aria-hidden="true" />
+              </button>
+            </div>
+
+            <div className="grid min-h-0 flex-1 grid-cols-[300px_1fr] gap-3 p-3">
+              <aside className="flex min-h-0 flex-col gap-3 rounded-lg border border-[var(--border)] bg-[var(--surface-strong)] p-3">
+                <div className="flex gap-2">
+                  <button type="button" onClick={addMapBlock} className="flex-1 rounded-md border border-[var(--border)] px-3 py-2 text-sm hover:bg-[var(--hover)]">
+                    + Scaffale
+                  </button>
+                  <button
+                    type="button"
+                    onClick={removeSelectedMapBlock}
+                    className="rounded-md border border-[var(--border)] px-3 py-2 text-sm text-rose-300 hover:bg-rose-500/10"
+                  >
+                    Elimina
+                  </button>
+                </div>
+
+                <div className="min-h-0 flex-1 overflow-auto rounded-md border border-[var(--border)]">
+                  <table className="table-dense w-full text-xs">
+                    <thead className="sticky top-0 bg-[var(--surface)] text-[10px] uppercase tracking-[0.16em] text-[var(--muted)]">
+                      <tr className="text-left">
+                        <th className="px-3 py-2">ID</th>
+                        <th className="px-3 py-2">Nome</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {mapBlocks.map((row) => (
+                        <tr
+                          key={`map-row-${row.id}`}
+                          className={`cursor-pointer border-t border-[var(--border)] ${selectedMapBlockId === row.id ? "bg-emerald-500/15" : ""}`}
+                          onClick={() => setSelectedMapBlockId(row.id)}
+                        >
+                          <td className="px-3 py-2 font-semibold">{row.id}</td>
+                          <td className="px-3 py-2">{row.label}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+
+                {selectedMapBlock ? (
+                  <div className="space-y-2 rounded-md border border-[var(--border)] p-3 text-sm">
+                    <label className="block">
+                      <span className="text-xs text-[var(--muted)]">Nome</span>
+                      <input
+                        type="text"
+                        value={selectedMapBlock.label}
+                        onChange={(event) => updateSelectedMapBlock("label", event.target.value)}
+                        className="mt-1 h-9 w-full rounded-md border border-[var(--border)] bg-[var(--surface)] px-2 text-sm"
+                      />
+                    </label>
+                    <div className="grid grid-cols-2 gap-2">
+                      <label className="block">
+                        <span className="text-xs text-[var(--muted)]">Larghezza</span>
+                        <input
+                          type="number"
+                          value={selectedMapBlock.w}
+                          onChange={(event) => updateSelectedMapBlock("w", event.target.value)}
+                          className="mt-1 h-9 w-full rounded-md border border-[var(--border)] bg-[var(--surface)] px-2 text-sm"
+                        />
+                      </label>
+                      <label className="block">
+                        <span className="text-xs text-[var(--muted)]">Altezza</span>
+                        <input
+                          type="number"
+                          value={selectedMapBlock.h}
+                          onChange={(event) => updateSelectedMapBlock("h", event.target.value)}
+                          className="mt-1 h-9 w-full rounded-md border border-[var(--border)] bg-[var(--surface)] px-2 text-sm"
+                        />
+                      </label>
+                    </div>
+                    <label className="block">
+                      <span className="text-xs text-[var(--muted)]">Colore</span>
+                      <input
+                        type="color"
+                        value={selectedMapBlock.color}
+                        onChange={(event) => updateSelectedMapBlock("color", event.target.value)}
+                        className="mt-1 h-9 w-full rounded-md border border-[var(--border)] bg-[var(--surface)] px-1"
+                      />
+                    </label>
+                  </div>
+                ) : null}
+              </aside>
+
+              <section className="relative min-h-0 rounded-lg border border-[var(--border)] bg-[var(--surface)] p-3">
+                <div className="h-full w-full overflow-auto rounded-md border border-[var(--border)] bg-[linear-gradient(rgba(255,255,255,0.03)_1px,transparent_1px),linear-gradient(90deg,rgba(255,255,255,0.03)_1px,transparent_1px)] [background-size:24px_24px]">
+                  <div className="relative min-h-[780px] min-w-[1200px]">
+                    {mapBlocks.map((row) => (
+                      <button
+                        key={`map-block-${row.id}`}
+                        type="button"
+                        onMouseDown={(event) => {
+                          const rect = event.currentTarget.getBoundingClientRect();
+                          mapDragRef.current = {
+                            id: row.id,
+                            offsetX: event.clientX - rect.left,
+                            offsetY: event.clientY - rect.top
+                          };
+                          setSelectedMapBlockId(row.id);
+                        }}
+                        className={`absolute flex items-center justify-center rounded border text-sm font-semibold text-slate-900 shadow ${
+                          selectedMapBlockId === row.id ? "ring-2 ring-emerald-400" : ""
+                        }`}
+                        style={{
+                          left: `${row.x}px`,
+                          top: `${row.y}px`,
+                          width: `${row.w}px`,
+                          height: `${row.h}px`,
+                          backgroundColor: row.color
+                        }}
+                      >
+                        {row.label}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              </section>
+            </div>
+
+            <div className="flex items-center justify-end gap-2 border-t border-[var(--border)] px-4 py-3">
+              <button type="button" className="rounded-md border border-[var(--border)] px-4 py-2 text-sm" onClick={() => setMapWizardOpen(false)}>
+                Chiudi
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  const timestamp = new Date().toISOString().replace(/[:.]/g, "-");
+                  const payload = JSON.stringify({ blocks: mapBlocks }, null, 2);
+                  downloadBlob(new Blob([payload], { type: "application/json;charset=utf-8;" }), `magazzino-layout-${timestamp}.json`);
+                }}
+                className="rounded-md bg-emerald-500 px-4 py-2 text-sm font-semibold text-white hover:bg-emerald-600"
+              >
+                Esporta layout
+              </button>
+            </div>
+          </div>
+        </div>
+      ) : null}
+
+      {movementsModalOpen ? (
+        <div
+          className="fixed inset-0 z-[61] flex items-center justify-center bg-black/70 px-3 py-3 sm:px-4 sm:py-6"
+          onMouseDown={() => setMovementsModalOpen(false)}
+        >
+          <div
+            className="flex h-[94dvh] w-[98vw] max-w-[1900px] min-h-0 flex-col overflow-hidden rounded-xl border border-[var(--border)] bg-[var(--surface)] shadow-xl"
+            onMouseDown={(event) => event.stopPropagation()}
+          >
+            <div className="flex items-start justify-between gap-4 border-b border-[var(--border)] px-4 py-3">
+              <div>
+                <p className="text-xs uppercase tracking-[0.2em] text-[var(--muted)]">Movimenti di magazzino</p>
+                <h2 className="mt-1 text-xl font-semibold">Lista Movimenti</h2>
+                {movementsFilterCode ? (
+                  <p className="mt-1 text-xs text-[var(--muted)]">
+                    Filtro articolo: <span className="font-semibold text-[var(--page-fg)]">{movementsFilterCode}</span>
+                  </p>
+                ) : null}
+              </div>
+              <button
+                type="button"
+                className="flex h-9 w-9 items-center justify-center rounded-md border border-[var(--border)] text-[var(--muted)] hover:bg-[var(--hover)]"
+                onClick={() => setMovementsModalOpen(false)}
+                aria-label="Chiudi lista movimenti"
+              >
+                <i className="fa-solid fa-xmark" aria-hidden="true" />
+              </button>
+            </div>
+
+            <div className="flex min-h-0 flex-1 flex-col p-4">
+              <div className="flex min-w-0 flex-wrap items-center gap-3">
+                <div className="min-w-0 flex-1">
+                  <div className="flex items-center rounded-md border border-[var(--border)] bg-[var(--surface)] px-3 py-2">
+                    <button
+                      type="button"
+                      onClick={() => fetchMovements({ force: true })}
+                      disabled={movementsLoading}
+                      className="flex h-8 w-8 min-h-[32px] min-w-[32px] items-center justify-center rounded-md text-[var(--muted)] transition hover:bg-[var(--hover)] disabled:cursor-not-allowed disabled:opacity-60"
+                      aria-label="Aggiorna movimenti"
+                    >
+                      <i className={`fa-solid fa-rotate-right text-[12px] ${movementsLoading ? "animate-spin" : ""}`} aria-hidden="true" />
+                    </button>
+                    <span className="mx-2 h-5 w-px bg-[var(--border)]" aria-hidden="true" />
+                    <i className="fa-solid fa-magnifying-glass text-[12px] text-[var(--muted)]" aria-hidden="true" />
+                    <input
+                      type="text"
+                      ref={movementsSearchInputRef}
+                      defaultValue=""
+                      onChange={(event) => debouncedMovementsSearchUpdate(event.target.value)}
+                      placeholder="Cerca codice, riferimento, note, part number"
+                      className="ml-3 w-full bg-transparent text-sm outline-none"
+                    />
+                  </div>
+                </div>
+                <div className="flex shrink-0 items-center gap-2 text-sm">
+                  <div className="flex items-center gap-2 text-xs text-[var(--muted)]">
+                    <span>Righe</span>
+                    <select
+                      value={movementsLimit}
+                      onChange={(event) => {
+                        setMovementsPage(1);
+                        setMovementsLimit(parseInt(event.target.value, 10));
+                      }}
+                      className="rounded-md border border-[var(--border)] bg-[var(--surface)] px-2 py-1 text-xs text-[var(--page-fg)]"
+                    >
+                      <option value="20">20</option>
+                      <option value="50">50</option>
+                      <option value="100">100</option>
+                      <option value="200">200</option>
+                    </select>
+                  </div>
+                  <button
+                    type="button"
+                    disabled={movementsPage === 1}
+                    onClick={() => setMovementsPage((prev) => Math.max(prev - 1, 1))}
+                    className="rounded-md border border-[var(--border)] px-3 py-1 disabled:opacity-50"
+                  >
+                    Prev
+                  </button>
+                  <span className="text-[var(--muted)]">
+                    {movementsPage} / {movementsTotalPages}
+                  </span>
+                  <button
+                    type="button"
+                    disabled={movementsPage >= movementsTotalPages}
+                    onClick={() => setMovementsPage((prev) => Math.min(prev + 1, movementsTotalPages))}
+                    className="rounded-md border border-[var(--border)] px-3 py-1 disabled:opacity-50"
+                  >
+                    Next
+                  </button>
+                </div>
+              </div>
+
+              <p className="mt-3 text-sm text-[var(--muted)]">
+                Da{" "}
+                <span className="text-[var(--page-fg)]">
+                  {movementsTotal === 0 ? 0 : formatNumber((movementsPage - 1) * movementsLimit + 1)}
+                </span>{" "}
+                a{" "}
+                <span className="text-[var(--page-fg)]">
+                  {movementsTotal === 0 ? 0 : formatNumber(Math.min(movementsPage * movementsLimit, movementsTotal))}
+                </span>{" "}
+                movimenti di <span className="text-[var(--page-fg)]">{formatNumber(movementsTotal)}</span>
+              </p>
+
+              {movementsError ? <p className="mt-2 text-sm text-rose-500">{movementsError}</p> : null}
+
+              <div className="mt-3 min-h-0 flex-1 overflow-auto rounded-md border border-[var(--border)]">
+                <table className="warehouse-table table-dense min-w-[2200px] w-full table-fixed text-xs">
+                  <colgroup>
+                    <col style={{ width: `${movementsColumnWidths.data}px` }} />
+                    <col style={{ width: `${movementsColumnWidths.codDdt}px` }} />
+                    <col style={{ width: `${movementsColumnWidths.codiceArticolo}px` }} />
+                    <col style={{ width: `${movementsColumnWidths.descrizioneArticolo}px` }} />
+                    <col style={{ width: `${movementsColumnWidths.descrizioneMovimento}px` }} />
+                    <col style={{ width: `${movementsColumnWidths.unitaMisura}px` }} />
+                    <col style={{ width: `${movementsColumnWidths.quantita}px` }} />
+                    <col style={{ width: `${movementsColumnWidths.costoAcquisto}px` }} />
+                    <col style={{ width: `${movementsColumnWidths.depositoIniziale}px` }} />
+                    <col style={{ width: `${movementsColumnWidths.depositoFinale}px` }} />
+                    <col style={{ width: `${movementsColumnWidths.nominativo}px` }} />
+                    <col style={{ width: `${movementsColumnWidths.varFisica}px` }} />
+                    <col style={{ width: `${movementsColumnWidths.varFiscale}px` }} />
+                    <col style={{ width: `${movementsColumnWidths.prezzoVendita}px` }} />
+                    <col style={{ width: `${movementsColumnWidths.partNumber}px` }} />
+                    <col style={{ width: `${movementsColumnWidths.note}px` }} />
+                  </colgroup>
+                  <thead className="sticky top-0 z-10 bg-[var(--surface-strong)]">
+                    <tr className="text-left text-[10px] uppercase tracking-[0.2em] text-[var(--muted)]">
+                      <th className="relative px-3 py-2 pr-5 whitespace-nowrap overflow-hidden">
+                        <button type="button" className="flex max-w-full items-center gap-2 truncate" onClick={() => handleMovementsSort("data")}>
+                          Data
+                          <i className={`fa-solid ${movementsSortIndicator("data")} text-[10px]`} aria-hidden="true" />
+                        </button>
+                        <span className="absolute right-0 top-0 h-full w-2 cursor-col-resize" onMouseDown={(event) => startMovementColumnResize(event, "data")} />
+                      </th>
+                      <th className="relative px-3 py-2 pr-5 whitespace-nowrap overflow-hidden">
+                        <button type="button" className="flex max-w-full items-center gap-2 truncate" onClick={() => handleMovementsSort("codDdt")}>
+                          COD DDT
+                          <i className={`fa-solid ${movementsSortIndicator("codDdt")} text-[10px]`} aria-hidden="true" />
+                        </button>
+                        <span className="absolute right-0 top-0 h-full w-2 cursor-col-resize" onMouseDown={(event) => startMovementColumnResize(event, "codDdt")} />
+                      </th>
+                      <th className="relative px-3 py-2 pr-5 whitespace-nowrap overflow-hidden">
+                        <button type="button" className="flex max-w-full items-center gap-2 truncate" onClick={() => handleMovementsSort("codiceArticolo")}>
+                          Cod Articolo
+                          <i className={`fa-solid ${movementsSortIndicator("codiceArticolo")} text-[10px]`} aria-hidden="true" />
+                        </button>
+                        <span className="absolute right-0 top-0 h-full w-2 cursor-col-resize" onMouseDown={(event) => startMovementColumnResize(event, "codiceArticolo")} />
+                      </th>
+                      <th className="relative px-3 py-2 pr-5 whitespace-nowrap overflow-hidden">
+                        <button type="button" className="flex max-w-full items-center gap-2 truncate" onClick={() => handleMovementsSort("descrizioneArticolo")}>
+                          Descrizione
+                          <i className={`fa-solid ${movementsSortIndicator("descrizioneArticolo")} text-[10px]`} aria-hidden="true" />
+                        </button>
+                        <span className="absolute right-0 top-0 h-full w-2 cursor-col-resize" onMouseDown={(event) => startMovementColumnResize(event, "descrizioneArticolo")} />
+                      </th>
+                      <th className="relative px-3 py-2 pr-5 whitespace-nowrap overflow-hidden">
+                        <button type="button" className="flex max-w-full items-center gap-2 truncate" onClick={() => handleMovementsSort("descrizioneMovimento")}>
+                          Descrizione Movimento
+                          <i className={`fa-solid ${movementsSortIndicator("descrizioneMovimento")} text-[10px]`} aria-hidden="true" />
+                        </button>
+                        <span className="absolute right-0 top-0 h-full w-2 cursor-col-resize" onMouseDown={(event) => startMovementColumnResize(event, "descrizioneMovimento")} />
+                      </th>
+                      <th className="relative px-3 py-2 pr-5 whitespace-nowrap overflow-hidden">
+                        <button type="button" className="flex max-w-full items-center gap-2 truncate" onClick={() => handleMovementsSort("unitaMisura")}>
+                          U di M
+                          <i className={`fa-solid ${movementsSortIndicator("unitaMisura")} text-[10px]`} aria-hidden="true" />
+                        </button>
+                        <span className="absolute right-0 top-0 h-full w-2 cursor-col-resize" onMouseDown={(event) => startMovementColumnResize(event, "unitaMisura")} />
+                      </th>
+                      <th className="relative px-3 py-2 pr-5 whitespace-nowrap overflow-hidden">
+                        <button type="button" className="flex max-w-full items-center gap-2 truncate" onClick={() => handleMovementsSort("quantita")}>
+                          QT
+                          <i className={`fa-solid ${movementsSortIndicator("quantita")} text-[10px]`} aria-hidden="true" />
+                        </button>
+                        <span className="absolute right-0 top-0 h-full w-2 cursor-col-resize" onMouseDown={(event) => startMovementColumnResize(event, "quantita")} />
+                      </th>
+                      <th className="relative px-3 py-2 pr-5 whitespace-nowrap overflow-hidden">
+                        <button type="button" className="flex max-w-full items-center gap-2 truncate" onClick={() => handleMovementsSort("costoAcquisto")}>
+                          Costo
+                          <i className={`fa-solid ${movementsSortIndicator("costoAcquisto")} text-[10px]`} aria-hidden="true" />
+                        </button>
+                        <span className="absolute right-0 top-0 h-full w-2 cursor-col-resize" onMouseDown={(event) => startMovementColumnResize(event, "costoAcquisto")} />
+                      </th>
+                      <th className="relative px-3 py-2 pr-5 whitespace-nowrap overflow-hidden">
+                        <button type="button" className="flex max-w-full items-center gap-2 truncate" onClick={() => handleMovementsSort("depositoIniziale")}>
+                          Dep_Iniziale
+                          <i className={`fa-solid ${movementsSortIndicator("depositoIniziale")} text-[10px]`} aria-hidden="true" />
+                        </button>
+                        <span className="absolute right-0 top-0 h-full w-2 cursor-col-resize" onMouseDown={(event) => startMovementColumnResize(event, "depositoIniziale")} />
+                      </th>
+                      <th className="relative px-3 py-2 pr-5 whitespace-nowrap overflow-hidden">
+                        <button type="button" className="flex max-w-full items-center gap-2 truncate" onClick={() => handleMovementsSort("depositoFinale")}>
+                          Dep_Finale
+                          <i className={`fa-solid ${movementsSortIndicator("depositoFinale")} text-[10px]`} aria-hidden="true" />
+                        </button>
+                        <span className="absolute right-0 top-0 h-full w-2 cursor-col-resize" onMouseDown={(event) => startMovementColumnResize(event, "depositoFinale")} />
+                      </th>
+                      <th className="relative px-3 py-2 pr-5 whitespace-nowrap overflow-hidden">
+                        <button type="button" className="flex max-w-full items-center gap-2 truncate" onClick={() => handleMovementsSort("nominativo")}>
+                          Nominativo
+                          <i className={`fa-solid ${movementsSortIndicator("nominativo")} text-[10px]`} aria-hidden="true" />
+                        </button>
+                        <span className="absolute right-0 top-0 h-full w-2 cursor-col-resize" onMouseDown={(event) => startMovementColumnResize(event, "nominativo")} />
+                      </th>
+                      <th className="relative px-3 py-2 pr-5 whitespace-nowrap overflow-hidden">
+                        <button type="button" className="flex w-full items-center justify-between gap-2" onClick={() => handleMovementsSort("varFisica")}>
+                          <span className="truncate">Var.Fisica</span>
+                          <i className={`fa-solid ${movementsSortIndicator("varFisica")} shrink-0 text-[10px]`} aria-hidden="true" />
+                        </button>
+                        <span className="absolute right-0 top-0 h-full w-2 cursor-col-resize" onMouseDown={(event) => startMovementColumnResize(event, "varFisica")} />
+                      </th>
+                      <th className="relative px-3 py-2 pr-5 whitespace-nowrap overflow-hidden">
+                        <button type="button" className="flex w-full items-center justify-between gap-2" onClick={() => handleMovementsSort("varFiscale")}>
+                          <span className="truncate">Var.Fiscale</span>
+                          <i className={`fa-solid ${movementsSortIndicator("varFiscale")} shrink-0 text-[10px]`} aria-hidden="true" />
+                        </button>
+                        <span className="absolute right-0 top-0 h-full w-2 cursor-col-resize" onMouseDown={(event) => startMovementColumnResize(event, "varFiscale")} />
+                      </th>
+                      <th className="relative px-3 py-2 pr-5 whitespace-nowrap overflow-hidden">
+                        <button type="button" className="flex max-w-full items-center gap-2 truncate" onClick={() => handleMovementsSort("prezzoVendita")}>
+                          Prezzo di Vendita
+                          <i className={`fa-solid ${movementsSortIndicator("prezzoVendita")} text-[10px]`} aria-hidden="true" />
+                        </button>
+                        <span className="absolute right-0 top-0 h-full w-2 cursor-col-resize" onMouseDown={(event) => startMovementColumnResize(event, "prezzoVendita")} />
+                      </th>
+                      <th className="relative px-3 py-2 pr-5 whitespace-nowrap overflow-hidden">
+                        <button type="button" className="flex max-w-full items-center gap-2 truncate" onClick={() => handleMovementsSort("partNumber")}>
+                          Part Number
+                          <i className={`fa-solid ${movementsSortIndicator("partNumber")} text-[10px]`} aria-hidden="true" />
+                        </button>
+                        <span className="absolute right-0 top-0 h-full w-2 cursor-col-resize" onMouseDown={(event) => startMovementColumnResize(event, "partNumber")} />
+                      </th>
+                      <th className="relative px-3 py-2 pr-5 whitespace-nowrap overflow-hidden">
+                        <button type="button" className="flex max-w-full items-center gap-2 truncate" onClick={() => handleMovementsSort("note")}>
+                          Note
+                          <i className={`fa-solid ${movementsSortIndicator("note")} text-[10px]`} aria-hidden="true" />
+                        </button>
+                        <span className="absolute right-0 top-0 h-full w-2 cursor-col-resize" onMouseDown={(event) => startMovementColumnResize(event, "note")} />
+                      </th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {movementsRows.map((row) => (
+                      <tr
+                        key={row.codMovimento}
+                        className={`border-t border-[var(--border)] ${
+                          movementsRowMenu.open && movementsRowMenu.row?.codMovimento === row.codMovimento
+                            ? "bg-emerald-500/20 shadow-[inset_3px_0_0_0_rgba(52,211,153,0.9)]"
+                            : ""
+                        }`}
+                        onContextMenu={(event) => {
+                          event.preventDefault();
+                          event.stopPropagation();
+                          setMovementsRowMenu({
+                            open: true,
+                            x: event.clientX,
+                            y: event.clientY,
+                            row,
+                            allocOpen: false
+                          });
+                        }}
+                      >
+                        <td className="px-3 py-2 whitespace-nowrap overflow-hidden">
+                          <span className="block truncate" title={formatDate(row.data)}>{formatDate(row.data)}</span>
+                        </td>
+                        <td className="px-3 py-2 whitespace-nowrap overflow-hidden">
+                          <span className="block truncate" title={String(row.codDdt || 0)}>{row.codDdt || 0}</span>
+                        </td>
+                        <td className="px-3 py-2 whitespace-nowrap overflow-hidden font-semibold text-sky-400">
+                          <span className="block truncate" title={row.codiceArticolo || ""}>{row.codiceArticolo || "-"}</span>
+                        </td>
+                        <td className="px-3 py-2 whitespace-nowrap overflow-hidden">
+                          <span className="block truncate" title={row.descrizioneArticolo || ""}>
+                            {row.descrizioneArticolo || "-"}
+                          </span>
+                        </td>
+                        <td className="px-3 py-2 whitespace-nowrap overflow-hidden">
+                          <span className="block truncate" title={row.descrizioneMovimento || ""}>
+                            {row.descrizioneMovimento || "-"}
+                          </span>
+                        </td>
+                        <td className="px-3 py-2 whitespace-nowrap overflow-hidden">
+                          <span className="block truncate" title={row.unitaMisura || ""}>{row.unitaMisura || "-"}</span>
+                        </td>
+                        <td className="px-3 py-2 whitespace-nowrap overflow-hidden">
+                          <span className="block truncate" title={formatNumber(row.quantita)}>{formatNumber(row.quantita)}</span>
+                        </td>
+                        <td className="px-3 py-2 whitespace-nowrap overflow-hidden">
+                          <span className="block truncate" title={formatCurrency(row.costoAcquisto)}>{formatCurrency(row.costoAcquisto)}</span>
+                        </td>
+                        <td className="px-3 py-2 whitespace-nowrap overflow-hidden">
+                          <span className="block truncate" title={row.depositoIniziale || ""}>
+                            {row.depositoIniziale || "-"}
+                          </span>
+                        </td>
+                        <td className="px-3 py-2 whitespace-nowrap overflow-hidden">
+                          <span className="block truncate" title={row.depositoFinale || ""}>
+                            {row.depositoFinale || "-"}
+                          </span>
+                        </td>
+                        <td className="px-3 py-2 whitespace-nowrap overflow-hidden">
+                          <span className="block truncate" title={row.nominativo || ""}>
+                            {row.nominativo || "-"}
+                          </span>
+                        </td>
+                        <td className="px-3 py-2 whitespace-nowrap overflow-hidden">
+                          <span className="block truncate" title={formatNumber(row.varFisica)}>{formatNumber(row.varFisica)}</span>
+                        </td>
+                        <td className="px-3 py-2 whitespace-nowrap overflow-hidden">
+                          <span className="block truncate" title={formatNumber(row.varFiscale)}>{formatNumber(row.varFiscale)}</span>
+                        </td>
+                        <td className="px-3 py-2 whitespace-nowrap overflow-hidden">
+                          <span className="block truncate" title={formatCurrency(row.prezzoVendita)}>{formatCurrency(row.prezzoVendita)}</span>
+                        </td>
+                        <td className="px-3 py-2 whitespace-nowrap overflow-hidden">
+                          <span className="block truncate" title={row.partNumber || ""}>
+                            {row.partNumber || "-"}
+                          </span>
+                        </td>
+                        <td className="px-3 py-2 whitespace-nowrap overflow-hidden">
+                          <span className="block truncate" title={row.note || ""}>
+                            {row.note || "-"}
+                          </span>
+                        </td>
+                      </tr>
+                    ))}
+                    {!movementsLoading && movementsRows.length === 0 ? (
+                      <tr>
+                        <td colSpan={16} className="px-3 py-8 text-center text-xs text-[var(--muted)]">
+                          Nessun movimento trovato.
+                        </td>
+                      </tr>
+                    ) : null}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          </div>
+        </div>
+      ) : null}
+
+      <div ref={movementsContextMenuRef}>
+      <ContextMenu
+        open={movementsRowMenu.open}
+        x={movementsRowMenu.x}
+        y={movementsRowMenu.y}
+        className="z-[70] w-64 rounded-lg border border-[var(--border)] bg-[var(--surface)] p-2 shadow-lg"
+      >
+        <button
+          type="button"
+          onClick={() => openAllocationMapPanel("manage")}
+          className="flex w-full items-center gap-2 rounded-md px-3 py-2 text-sm hover:bg-[var(--hover)]"
+        >
+          <i className="fa-solid fa-pen-to-square text-[12px] text-[var(--muted)]" aria-hidden="true" />
+          Modifica
+        </button>
+        <button
+          type="button"
+          onClick={() => {
+            if (!movementsRowMenu.row?.hasAllegato) return;
+            closeMovementsContextMenu();
+          }}
+          disabled={!movementsRowMenu.row?.hasAllegato}
+          className="flex w-full items-center gap-2 rounded-md px-3 py-2 text-sm hover:bg-[var(--hover)] disabled:cursor-not-allowed disabled:opacity-40"
+        >
+          <i className="fa-solid fa-print text-[12px] text-[var(--muted)]" aria-hidden="true" />
+          Stampa allegato
+        </button>
+        <button
+          type="button"
+          onClick={closeMovementsContextMenu}
+          className="flex w-full items-center gap-2 rounded-md px-3 py-2 text-sm hover:bg-[var(--hover)]"
+        >
+          <i className="fa-solid fa-paperclip text-[12px] text-[var(--muted)]" aria-hidden="true" />
+          Gestisci allegati
+        </button>
+        <div className="relative">
+          <button
+            type="button"
+            onClick={() => setMovementsRowMenu((prev) => ({ ...prev, allocOpen: !prev.allocOpen }))}
+            className="flex w-full items-center justify-between rounded-md px-3 py-2 text-sm hover:bg-[var(--hover)]"
+          >
+            <span className="flex items-center gap-2">
+              <i className="fa-solid fa-boxes-stacked text-[12px] text-[var(--muted)]" aria-hidden="true" />
+              Allocazione magazzino
+            </span>
+            <i className={`fa-solid fa-chevron-right text-[10px] text-[var(--muted)] ${movementsRowMenu.allocOpen ? "rotate-90" : ""}`} aria-hidden="true" />
+          </button>
+          {movementsRowMenu.allocOpen ? (
+            <div className="absolute left-[calc(100%+6px)] top-0 z-[71] w-56 rounded-lg border border-[var(--border)] bg-[var(--surface)] p-2 shadow-lg">
+              <button
+                type="button"
+                onClick={() => openAllocationMapPanel("manage")}
+                className="flex w-full items-center gap-2 rounded-md px-3 py-2 text-sm hover:bg-[var(--hover)]"
+              >
+                <i className="fa-solid fa-sliders text-[12px] text-[var(--muted)]" aria-hidden="true" />
+                Gestisci allocazione
+              </button>
+              <button
+                type="button"
+                onClick={() => openAllocationMapPanel("view")}
+                className="flex w-full items-center gap-2 rounded-md px-3 py-2 text-sm hover:bg-[var(--hover)]"
+              >
+                <i className="fa-solid fa-eye text-[12px] text-[var(--muted)]" aria-hidden="true" />
+                Vedi allocazione
+              </button>
+            </div>
+          ) : null}
+        </div>
+      </ContextMenu>
+      </div>
 
       {causaliOpen ? (
         <div
@@ -1401,8 +3168,12 @@ export default function WarehouseGiacenze() {
           >
             <div className="flex items-start justify-between gap-4">
               <div>
-                <p className="text-xs uppercase tracking-[0.2em] text-[var(--muted)]">Carico di magazzino</p>
-                <h2 className="mt-1 text-xl font-semibold">Seleziona causale di carico</h2>
+                <p className="text-xs uppercase tracking-[0.2em] text-[var(--muted)]">
+                  {causaliType === "scarico" ? "Scarico di magazzino" : "Carico di magazzino"}
+                </p>
+                <h2 className="mt-1 text-xl font-semibold">
+                  {causaliType === "scarico" ? "Seleziona causale di scarico" : "Seleziona causale di carico"}
+                </h2>
               </div>
               <button
                 type="button"
@@ -1492,7 +3263,14 @@ export default function WarehouseGiacenze() {
                   disabled={!selectedCausale}
                   onClick={() => {
                     setCausaliOpen(false);
-                    setCaricoWizardOpen(true);
+                    resetMovementWizardDraft();
+                    if (causaliType === "scarico") {
+                      setCaricoScaricoMode("scarico");
+                      setScaricoWizardOpen(true);
+                    } else {
+                      setCaricoScaricoMode("carico");
+                      setCaricoWizardOpen(true);
+                    }
                   }}
                 >
                   Procedi
@@ -1503,18 +3281,21 @@ export default function WarehouseGiacenze() {
         </div>
       ) : null}
 
-      {caricoWizardOpen ? (
+      {caricoWizardOpen || scaricoWizardOpen ? (
         <div className="fixed inset-0 z-[60] overflow-hidden bg-[var(--page-bg)] text-[var(--page-fg)]">
           <div className="h-full w-full overflow-y-auto overflow-x-hidden lg:overflow-hidden">
             <div className="flex min-h-full w-full flex-col bg-[var(--surface)] lg:h-full lg:overflow-hidden">
               <div className="relative border-b border-[var(--border)] px-4 py-3">
                 <div className="pr-12">
-                  <h2 className="text-lg font-semibold">Carico Merce</h2>
+                  <h2 className="text-lg font-semibold">{scaricoWizardOpen ? "Scarico Merce" : "Carico Merce"}</h2>
                 </div>
                 <button
                   type="button"
                   className="absolute right-4 top-3 flex h-9 w-9 items-center justify-center rounded-md border border-[var(--border)] bg-[var(--surface)] text-[var(--muted)] hover:bg-[var(--hover)]"
-                  onClick={() => setCaricoWizardOpen(false)}
+                  onClick={() => {
+                    setCaricoWizardOpen(false);
+                    setScaricoWizardOpen(false);
+                  }}
                   aria-label="Chiudi"
                 >
                   <i className="fa-solid fa-xmark" aria-hidden="true" />
@@ -1534,14 +3315,14 @@ export default function WarehouseGiacenze() {
                           const exact = suppliers.find((row) => String(row.nominativo || "") === value);
                           setSelectedSupplier(exact || null);
                         }}
-                        placeholder="Cerca fornitore"
+                        placeholder={scaricoWizardOpen ? "Cerca riferimento" : "Cerca fornitore"}
                         className="ml-3 w-full bg-transparent text-sm outline-none"
                       />
                       <button
                         type="button"
                         onClick={() => setSupplierComboOpen((prev) => !prev)}
                         className="ml-2 text-[var(--muted)]"
-                        aria-label="Apri elenco fornitori"
+                        aria-label={scaricoWizardOpen ? "Apri elenco riferimenti" : "Apri elenco fornitori"}
                       >
                         <i
                           className={`fa-solid fa-chevron-down text-[12px] transition-transform ${supplierComboOpen ? "rotate-180" : ""}`}
@@ -1552,7 +3333,11 @@ export default function WarehouseGiacenze() {
 
                     {supplierComboOpen ? (
                       <div className="absolute left-0 right-0 top-full z-20 mt-1 max-h-64 overflow-auto rounded-md border border-[var(--border)] bg-[var(--surface)] shadow-xl">
-                        {suppliersLoading ? <p className="px-3 py-2 text-xs text-[var(--muted)]">Loading suppliers...</p> : null}
+                        {suppliersLoading ? (
+                          <p className="px-3 py-2 text-xs text-[var(--muted)]">
+                            {scaricoWizardOpen ? "Caricamento riferimenti..." : "Caricamento fornitori..."}
+                          </p>
+                        ) : null}
                         {!suppliersLoading &&
                         suppliers.filter((row) => {
                           const term = supplierSearch.trim().toLowerCase();
@@ -1562,7 +3347,9 @@ export default function WarehouseGiacenze() {
                             String(row.piva || "").toLowerCase().includes(term)
                           );
                         }).length === 0 ? (
-                          <p className="px-3 py-2 text-xs text-[var(--muted)]">No suppliers found.</p>
+                          <p className="px-3 py-2 text-xs text-[var(--muted)]">
+                            {scaricoWizardOpen ? "Nessun riferimento trovato." : "Nessun fornitore trovato."}
+                          </p>
                         ) : null}
                         {!suppliersLoading
                           ? suppliers
@@ -1595,6 +3382,17 @@ export default function WarehouseGiacenze() {
                       </div>
                     ) : null}
                   </div>
+
+                  {!scaricoWizardOpen ? (
+                    <button
+                      type="button"
+                      onClick={() => setQuickPartyOpen(true)}
+                      className="h-11 rounded-md border border-[var(--border)] px-3 text-xs font-semibold text-[var(--muted)] hover:bg-[var(--hover)]"
+                    >
+                      <i className="fa-solid fa-user-plus mr-2" aria-hidden="true" />
+                      Nuovo cliente/fornitore
+                    </button>
+                  ) : null}
 
                   <div className="hidden h-11 items-center gap-2 text-[var(--muted)] sm:flex">
                     <i className="fa-solid fa-arrow-right text-sm" aria-hidden="true" />
@@ -1630,6 +3428,17 @@ export default function WarehouseGiacenze() {
                       className="h-11 w-full rounded-md border border-[var(--border)] bg-[var(--surface)] px-3 text-sm lg:min-w-[220px]"
                     />
                   </div>
+
+                  {scaricoWizardOpen ? (
+                    <button
+                      type="button"
+                      onClick={openDdtWizardPopup}
+                      className="inline-flex h-11 items-center gap-2 rounded-md border border-[var(--border)] px-3 text-xs font-semibold text-[var(--muted)] hover:bg-[var(--hover)]"
+                    >
+                      <i className="fa-solid fa-file-lines text-[12px]" aria-hidden="true" />
+                      Emetti DDT
+                    </button>
+                  ) : null}
                 </div>
               </div>
               <div className="min-h-0 flex-1 overflow-visible overflow-x-hidden px-3 py-3 sm:px-4 sm:py-4 lg:overflow-y-auto">
@@ -1705,8 +3514,8 @@ export default function WarehouseGiacenze() {
     compactCaricoLayout={compactCaricoLayout}
     quantity={getArticleRowQuantity(row.codiceArticolo)}
     onSelect={handleSelectArticle}
-    onDecrementQty={(codiceArticolo) => bumpArticleRowQuantity(codiceArticolo, -1)}
-    onIncrementQty={(codiceArticolo) => bumpArticleRowQuantity(codiceArticolo, 1)}
+    onDecrementQty={handleDecrementArticleRowQuantity}
+    onIncrementQty={handleIncrementArticleRowQuantity}
     onQuantityInputChange={setArticleRowQuantity}
     onAdd={addMovementItemFromArticle}
   />
@@ -1805,7 +3614,10 @@ export default function WarehouseGiacenze() {
                                     />
                                     <button
                                       type="button"
-                                      onClick={(event) => event.stopPropagation()}
+                                      onClick={(event) => {
+                                        event.stopPropagation();
+                                        openSerialScan(row.id);
+                                      }}
                                       className="absolute right-1 top-1/2 inline-flex h-[18px] w-[18px] -translate-y-1/2 items-center justify-center rounded-sm text-[var(--muted)] hover:bg-[var(--hover)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald-400/60"
                                       aria-label="Scansiona seriale"
                                       title="Scansiona seriale"
@@ -1859,7 +3671,7 @@ export default function WarehouseGiacenze() {
                             {movementItems.length === 0 ? (
                               <tr>
                                 <td colSpan={8} className="h-[220px] px-3 text-center align-middle text-xs text-[var(--muted)]">
-                                  Gli articoli caricati in magazzino appariranno qui.
+                                  {scaricoWizardOpen ? "Le righe di scarico appariranno qui." : "Gli articoli caricati in magazzino appariranno qui."}
                                 </td>
                               </tr>
                             ) : null}
@@ -1870,6 +3682,7 @@ export default function WarehouseGiacenze() {
                   </div>
                 </section>
 
+                {!scaricoWizardOpen ? (
                 <div className="relative hidden lg:block lg:py-1">
                   <div className="h-[2px] w-full bg-[var(--border)]" />
                   <button
@@ -1887,7 +3700,9 @@ export default function WarehouseGiacenze() {
                     />
                   </button>
                 </div>
+                ) : null}
 
+                {!scaricoWizardOpen ? (
                 <div
                   className={`max-h-none overflow-visible opacity-100 lg:overflow-hidden lg:transition-[max-height,opacity] lg:duration-300 lg:ease-out ${
                     desktopExtraCardsCollapsed ? "lg:max-h-0 lg:opacity-0 lg:pointer-events-none" : "lg:max-h-[520px] lg:opacity-100"
@@ -2006,22 +3821,32 @@ export default function WarehouseGiacenze() {
                   </div>
                 </section>
                 </div>
+                ) : null}
+
+                {scaricoWizardOpen && scaricoInsufficientItems.length > 0 ? (
+                  <div className="rounded-md border border-rose-500/40 bg-rose-500/10 px-3 py-2 text-xs text-rose-300">
+                    Quantita non disponibile: {scaricoInsufficientItems[0].code} (richiesta {scaricoInsufficientItems[0].qty}, disponibile {scaricoInsufficientItems[0].available}).
+                  </div>
+                ) : null}
 
                 <div className="mt-2 flex items-center justify-end gap-2 border-t border-[var(--border)] pt-2">
                   <button
                     type="button"
-                    onClick={() => setCaricoWizardOpen(false)}
+                    onClick={() => {
+                      setCaricoWizardOpen(false);
+                      setScaricoWizardOpen(false);
+                    }}
                     className="rounded-md border border-[var(--border)] px-3 py-1.5 text-xs font-semibold text-[var(--muted)] hover:bg-[var(--hover)]"
                   >
                     Annulla
                   </button>
                   <button
                     type="button"
-                    onClick={submitCarico}
-                    disabled={caricoSaving || !selectedCausale || !selectedSupplier || movementItems.length === 0 || hasInvalidMovementQuantities}
+                    onClick={() => submitMovement(scaricoWizardOpen ? "scarico" : "carico")}
+                    disabled={caricoSaving || !selectedCausale || !selectedSupplier || movementItems.length === 0 || hasInvalidMovementQuantities || (scaricoWizardOpen && scaricoInsufficientItems.length > 0)}
                     className="rounded-md bg-emerald-500 px-3 py-1.5 text-xs font-semibold text-white hover:bg-emerald-600 disabled:cursor-not-allowed disabled:opacity-60"
                   >
-                    {caricoSaving ? "Salvataggio..." : "Conferma carico"}
+                    {caricoSaving ? "Salvataggio..." : scaricoWizardOpen ? "Conferma scarico" : "Conferma carico"}
                   </button>
                 </div>
 
@@ -2029,6 +3854,501 @@ export default function WarehouseGiacenze() {
                 {aiAssistInfo ? <p className="text-sm text-emerald-500">{aiAssistInfo}</p> : null}
                 </div>
               </div>
+            </div>
+          </div>
+        </div>
+      ) : null}
+
+      {scanModal.open ? (
+        <div
+          className="fixed inset-0 z-[72] flex items-center justify-center bg-black/80 px-4 py-6"
+          onMouseDown={() => closeScanModal()}
+        >
+          <div
+            className="w-full max-w-md rounded-xl border border-[var(--border)] bg-[var(--surface)] p-4 shadow-xl"
+            onMouseDown={(event) => event.stopPropagation()}
+          >
+            <div className="flex items-start justify-between gap-4">
+              <div>
+                <p className="text-xs uppercase tracking-[0.2em] text-[var(--muted)]">Scanner seriale</p>
+                <h3 className="mt-1 text-lg font-semibold">Collega smartphone con QR</h3>
+              </div>
+              <button
+                type="button"
+                className="flex h-8 w-8 items-center justify-center rounded-md border border-[var(--border)] text-[var(--muted)] hover:bg-[var(--hover)]"
+                onClick={() => closeScanModal()}
+                aria-label="Chiudi scanner seriale"
+              >
+                <i className="fa-solid fa-xmark" aria-hidden="true" />
+              </button>
+            </div>
+
+            {scanModal.mobileUrl ? (
+              <div className="mt-3 rounded-lg border border-[var(--border)] bg-[var(--surface-soft)] p-3">
+                <img
+                  src={`https://api.qrserver.com/v1/create-qr-code/?size=240x240&data=${encodeURIComponent(scanModal.mobileUrl)}`}
+                  alt="QR scanner seriale"
+                  className="mx-auto h-52 w-52 rounded-md border border-[var(--border)] bg-white p-2"
+                />
+                <p className="mt-3 text-center text-xs text-[var(--muted)]">
+                  Scansiona il QR dal telefono sulla stessa rete, scatta la foto del seriale e attendi il ritorno automatico.
+                </p>
+                <div className="mt-2 flex justify-center">
+                  <button
+                    type="button"
+                    className="rounded-md border border-[var(--border)] px-3 py-1.5 text-xs hover:bg-[var(--hover)]"
+                    onClick={() => navigator.clipboard?.writeText(scanModal.mobileUrl).catch(() => null)}
+                  >
+                    Copia link mobile
+                  </button>
+                </div>
+              </div>
+            ) : (
+              <p className="mt-4 text-sm text-[var(--muted)]">Avvio sessione in corso...</p>
+            )}
+
+            {scanModal.status === "waiting" || scanModal.status === "processing" ? (
+              <p className="mt-3 text-sm text-emerald-400">In attesa di scansione dal telefono...</p>
+            ) : null}
+            {scanModal.status === "ready" ? (
+              <p className="mt-3 text-sm text-emerald-400">Seriale acquisito: {scanModal.seriale || "-"}</p>
+            ) : null}
+            {scanModal.status === "error" && scanModal.error ? (
+              <p className="mt-3 text-sm text-rose-400">{scanModal.error}</p>
+            ) : null}
+          </div>
+        </div>
+      ) : null}
+
+      {quickPartyOpen ? (
+        <div
+          className="fixed inset-0 z-[72] flex items-center justify-center bg-black/80 px-4 py-6"
+          onMouseDown={() => setQuickPartyOpen(false)}
+        >
+          <div
+            className="w-full max-w-3xl rounded-xl border border-[var(--border)] bg-[var(--surface)] p-4 shadow-xl"
+            onMouseDown={(event) => event.stopPropagation()}
+          >
+            <div className="flex items-start justify-between gap-4">
+              <div>
+                <p className="text-xs uppercase tracking-[0.2em] text-[var(--muted)]">Anagrafica rapida</p>
+                <h3 className="mt-1 text-lg font-semibold">Nuovo cliente/fornitore</h3>
+              </div>
+              <button
+                type="button"
+                className="flex h-8 w-8 items-center justify-center rounded-md border border-[var(--border)] text-[var(--muted)] hover:bg-[var(--hover)]"
+                onClick={() => setQuickPartyOpen(false)}
+                aria-label="Chiudi anagrafica rapida"
+              >
+                <i className="fa-solid fa-xmark" aria-hidden="true" />
+              </button>
+            </div>
+
+            <div className="mt-4 grid gap-3 sm:grid-cols-2">
+              <label className="text-sm">
+                <span className="text-xs uppercase tracking-[0.2em] text-[var(--muted)]">Tipo</span>
+                <select
+                  defaultValue="FORNITORE"
+                  onChange={(event) => updateQuickPartyField("tipo", event.target.value)}
+                  className="mt-1.5 w-full rounded-md border border-[var(--border)] bg-[var(--surface)] px-3 py-2 text-sm"
+                >
+                  <option value="FORNITORE">FORNITORE</option>
+                  <option value="CLIENTE">CLIENTE</option>
+                </select>
+              </label>
+              <label className="text-sm">
+                <span className="text-xs uppercase tracking-[0.2em] text-[var(--muted)]">Nominativo</span>
+                <input
+                  type="text"
+                  defaultValue=""
+                  onChange={(event) => updateQuickPartyField("nominativo", event.target.value)}
+                  className="mt-1.5 w-full rounded-md border border-[var(--border)] bg-[var(--surface)] px-3 py-2 text-sm"
+                />
+              </label>
+              <label className="text-sm">
+                <span className="text-xs uppercase tracking-[0.2em] text-[var(--muted)]">P.IVA</span>
+                <input
+                  type="text"
+                  defaultValue=""
+                  onChange={(event) => updateQuickPartyField("piva", event.target.value)}
+                  className="mt-1.5 w-full rounded-md border border-[var(--border)] bg-[var(--surface)] px-3 py-2 text-sm"
+                />
+              </label>
+              <label className="text-sm">
+                <span className="text-xs uppercase tracking-[0.2em] text-[var(--muted)]">Codice Fiscale</span>
+                <input
+                  type="text"
+                  defaultValue=""
+                  onChange={(event) => updateQuickPartyField("codFiscale", event.target.value)}
+                  className="mt-1.5 w-full rounded-md border border-[var(--border)] bg-[var(--surface)] px-3 py-2 text-sm"
+                />
+              </label>
+              <label className="text-sm sm:col-span-2">
+                <span className="text-xs uppercase tracking-[0.2em] text-[var(--muted)]">Indirizzo</span>
+                <input
+                  type="text"
+                  defaultValue=""
+                  onChange={(event) => updateQuickPartyField("indirizzo", event.target.value)}
+                  className="mt-1.5 w-full rounded-md border border-[var(--border)] bg-[var(--surface)] px-3 py-2 text-sm"
+                />
+              </label>
+              <label className="text-sm">
+                <span className="text-xs uppercase tracking-[0.2em] text-[var(--muted)]">Citta</span>
+                <input
+                  type="text"
+                  defaultValue=""
+                  onChange={(event) => updateQuickPartyField("citta", event.target.value)}
+                  className="mt-1.5 w-full rounded-md border border-[var(--border)] bg-[var(--surface)] px-3 py-2 text-sm"
+                />
+              </label>
+              <label className="text-sm">
+                <span className="text-xs uppercase tracking-[0.2em] text-[var(--muted)]">CAP</span>
+                <input
+                  type="text"
+                  defaultValue=""
+                  onChange={(event) => updateQuickPartyField("cap", event.target.value)}
+                  className="mt-1.5 w-full rounded-md border border-[var(--border)] bg-[var(--surface)] px-3 py-2 text-sm"
+                />
+              </label>
+              <label className="text-sm">
+                <span className="text-xs uppercase tracking-[0.2em] text-[var(--muted)]">Provincia</span>
+                <input
+                  type="text"
+                  defaultValue=""
+                  onChange={(event) => updateQuickPartyField("provincia", event.target.value)}
+                  className="mt-1.5 w-full rounded-md border border-[var(--border)] bg-[var(--surface)] px-3 py-2 text-sm"
+                />
+              </label>
+              <label className="text-sm">
+                <span className="text-xs uppercase tracking-[0.2em] text-[var(--muted)]">Regione</span>
+                <input
+                  type="text"
+                  defaultValue=""
+                  onChange={(event) => updateQuickPartyField("regione", event.target.value)}
+                  className="mt-1.5 w-full rounded-md border border-[var(--border)] bg-[var(--surface)] px-3 py-2 text-sm"
+                />
+              </label>
+              <label className="text-sm">
+                <span className="text-xs uppercase tracking-[0.2em] text-[var(--muted)]">Telefono</span>
+                <input
+                  type="text"
+                  defaultValue=""
+                  onChange={(event) => updateQuickPartyField("telefoni", event.target.value)}
+                  className="mt-1.5 w-full rounded-md border border-[var(--border)] bg-[var(--surface)] px-3 py-2 text-sm"
+                />
+              </label>
+              <label className="text-sm">
+                <span className="text-xs uppercase tracking-[0.2em] text-[var(--muted)]">Email</span>
+                <input
+                  type="email"
+                  defaultValue=""
+                  onChange={(event) => updateQuickPartyField("email", event.target.value)}
+                  className="mt-1.5 w-full rounded-md border border-[var(--border)] bg-[var(--surface)] px-3 py-2 text-sm"
+                />
+              </label>
+              <label className="text-sm sm:col-span-2">
+                <span className="text-xs uppercase tracking-[0.2em] text-[var(--muted)]">PEC</span>
+                <input
+                  type="text"
+                  defaultValue=""
+                  onChange={(event) => updateQuickPartyField("pec", event.target.value)}
+                  className="mt-1.5 w-full rounded-md border border-[var(--border)] bg-[var(--surface)] px-3 py-2 text-sm"
+                />
+              </label>
+              <label className="text-sm sm:col-span-2">
+                <span className="text-xs uppercase tracking-[0.2em] text-[var(--muted)]">Note</span>
+                <input
+                  type="text"
+                  defaultValue=""
+                  onChange={(event) => updateQuickPartyField("note", event.target.value)}
+                  className="mt-1.5 w-full rounded-md border border-[var(--border)] bg-[var(--surface)] px-3 py-2 text-sm"
+                />
+              </label>
+            </div>
+
+            {quickPartyError ? <p className="mt-3 text-sm text-rose-500">{quickPartyError}</p> : null}
+
+            <div className="mt-4 flex items-center justify-end gap-2">
+              <button
+                type="button"
+                onClick={() => setQuickPartyOpen(false)}
+                className="rounded-md border border-[var(--border)] px-3 py-1.5 text-xs font-semibold text-[var(--muted)] hover:bg-[var(--hover)]"
+              >
+                Annulla
+              </button>
+              <button
+                type="button"
+                onClick={saveQuickParty}
+                disabled={quickPartySaving}
+                className="rounded-md bg-emerald-500 px-3 py-1.5 text-xs font-semibold text-white hover:bg-emerald-600 disabled:cursor-not-allowed disabled:opacity-60"
+              >
+                {quickPartySaving ? "Salvataggio..." : "Salva anagrafica"}
+              </button>
+            </div>
+          </div>
+        </div>
+      ) : null}
+
+      {ddtWizardOpen ? (
+        <div
+          className="fixed inset-0 z-[72] flex items-start justify-center overflow-hidden bg-black/80 px-3 py-3 sm:items-center sm:px-4 sm:py-6"
+          onMouseDown={() => setDdtWizardOpen(false)}
+        >
+          <div
+            className="my-auto flex w-full max-w-[96rem] max-h-[calc(100dvh-1.5rem)] flex-col overflow-hidden rounded-xl border border-[var(--border)] bg-[var(--surface)] p-4 shadow-xl sm:max-h-[calc(100dvh-3rem)]"
+            onMouseDown={(event) => event.stopPropagation()}
+          >
+            <div className="flex items-start justify-between gap-4">
+              <div>
+                <p className="text-xs uppercase tracking-[0.2em] text-[var(--muted)]">Documento</p>
+                <h3 className="mt-1 text-lg font-semibold">Wizard Emissione DDT</h3>
+              </div>
+              <button
+                type="button"
+                className="flex h-8 w-8 items-center justify-center rounded-md border border-[var(--border)] text-[var(--muted)] hover:bg-[var(--hover)]"
+                onClick={() => setDdtWizardOpen(false)}
+                aria-label="Chiudi wizard DDT"
+              >
+                <i className="fa-solid fa-xmark" aria-hidden="true" />
+              </button>
+            </div>
+
+            <div className="mt-4 min-h-0 flex-1 overflow-hidden">
+              <div className="grid h-full min-h-0 gap-4 xl:grid-cols-[minmax(0,1fr)_minmax(420px,46%)]">
+                <div className="min-h-0 overflow-y-auto pr-1">
+                  <div className="grid gap-3 sm:grid-cols-2">
+                    <label className="text-sm">
+                      <span className="text-xs uppercase tracking-[0.2em] text-[var(--muted)]">Numero DDT</span>
+                      <input
+                        type="text"
+                        value={ddtWizardForm.numeroDdt}
+                        onChange={(event) => setDdtWizardForm((prev) => ({ ...prev, numeroDdt: event.target.value }))}
+                        className="mt-1.5 w-full rounded-md border border-[var(--border)] bg-[var(--surface)] px-3 py-2 text-sm"
+                      />
+                    </label>
+                    <label className="text-sm">
+                      <span className="text-xs uppercase tracking-[0.2em] text-[var(--muted)]">Data</span>
+                      <input
+                        type="datetime-local"
+                        value={ddtWizardForm.data}
+                        onChange={(event) => setDdtWizardForm((prev) => ({ ...prev, data: event.target.value }))}
+                        className="mt-1.5 w-full rounded-md border border-[var(--border)] bg-[var(--surface)] px-3 py-2 text-sm"
+                      />
+                    </label>
+                    <label className="text-sm sm:col-span-2">
+                      <span className="text-xs uppercase tracking-[0.2em] text-[var(--muted)]">Riferimento</span>
+                      <input
+                        type="text"
+                        value={selectedSupplier?.nominativo || ""}
+                        readOnly
+                        className="mt-1.5 w-full rounded-md border border-[var(--border)] bg-[var(--surface-soft)] px-3 py-2 text-sm text-[var(--muted)]"
+                      />
+                    </label>
+                    <label className="text-sm sm:col-span-2">
+                      <span className="text-xs uppercase tracking-[0.2em] text-[var(--muted)]">Indirizzo destinazione</span>
+                      <div className="mt-1.5 flex items-center gap-2">
+                        <input
+                          type="text"
+                          value={ddtWizardForm.indirizzoDestinazione}
+                          onChange={(event) => setDdtWizardForm((prev) => ({ ...prev, indirizzoDestinazione: event.target.value }))}
+                          className="w-full rounded-md border border-[var(--border)] bg-[var(--surface)] px-3 py-2 text-sm"
+                        />
+                        <button
+                          type="button"
+                          onClick={() =>
+                            setDdtWizardForm((prev) => ({
+                              ...prev,
+                              indirizzoDestinazione: buildSupplierDestinationAddress(selectedSupplier)
+                            }))
+                          }
+                          className="shrink-0 rounded-md border border-[var(--border)] px-2.5 py-2 text-[11px] font-semibold text-[var(--muted)] hover:bg-[var(--hover)]"
+                        >
+                          Importa da scheda
+                        </button>
+                      </div>
+                    </label>
+                    <label className="text-sm sm:col-span-2">
+                      <span className="text-xs uppercase tracking-[0.2em] text-[var(--muted)]">Trasporto a mezzo</span>
+                      <input
+                        type="text"
+                        value={ddtWizardForm.trasportoMezzo}
+                        onChange={(event) => setDdtWizardForm((prev) => ({ ...prev, trasportoMezzo: event.target.value }))}
+                        className="mt-1.5 w-full rounded-md border border-[var(--border)] bg-[var(--surface)] px-3 py-2 text-sm"
+                      />
+                    </label>
+                    <label className="text-sm sm:col-span-2">
+                      <span className="text-xs uppercase tracking-[0.2em] text-[var(--muted)]">Note</span>
+                      <input
+                        type="text"
+                        value={ddtWizardForm.note}
+                        onChange={(event) => setDdtWizardForm((prev) => ({ ...prev, note: event.target.value }))}
+                        className="mt-1.5 w-full rounded-md border border-[var(--border)] bg-[var(--surface)] px-3 py-2 text-sm"
+                      />
+                    </label>
+                  </div>
+
+                  <div className="mt-4 rounded-md border border-[var(--border)]">
+                    <table className="table-dense w-full text-xs">
+                      <thead className="bg-[var(--surface-strong)] text-[9px] uppercase tracking-[0.16em] text-[var(--muted)]">
+                        <tr className="text-left">
+                          <th className="px-2 py-1.5">Codice</th>
+                          <th className="px-2 py-1.5">Descrizione</th>
+                          <th className="px-2 py-1.5">Qta</th>
+                          <th className="px-2 py-1.5">Seriale</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {movementItems.map((row) => (
+                          <tr key={`ddt-row-${row.id}`} className="border-t border-[var(--border)]">
+                            <td className="px-2 py-1.5">{row?.articolo?.codiceArticolo || "-"}</td>
+                            <td className="px-2 py-1.5">{row?.articolo?.descrizione || "-"}</td>
+                            <td className="px-2 py-1.5">{row?.quantita || 0}</td>
+                            <td className="px-2 py-1.5">{row?.seriale || row?.seriali?.[0] || "-"}</td>
+                          </tr>
+                        ))}
+                        {movementItems.length === 0 ? (
+                          <tr>
+                            <td colSpan={4} className="px-2 py-4 text-center text-[var(--muted)]">Nessuna riga disponibile.</td>
+                          </tr>
+                        ) : null}
+                      </tbody>
+                    </table>
+                  </div>
+                </div>
+
+                <div className="min-h-0 overflow-y-auto rounded-md border border-[var(--border)] bg-[var(--surface-soft)] p-3">
+                  <div className="mx-auto min-h-full w-full max-w-[820px] bg-white p-6 text-black shadow-sm">
+                    <div className="border border-[#9ca3af]">
+                      <div className="grid min-h-[66px] grid-cols-2 items-center px-4 py-2">
+                        <div className="flex items-center">
+                          <img src={htsmedLogo} alt="HTSMED" className="max-h-10 max-w-[150px] object-contain" />
+                        </div>
+                        <div className="flex justify-end">
+                          <img src={ankeLogo} alt="ANKE" className="max-h-9 max-w-[120px] object-contain" />
+                        </div>
+                      </div>
+                      <div className="grid grid-cols-[1fr_108px_88px] bg-[#0b8fd1] px-2 py-1 text-[11px] font-bold italic text-white">
+                        <div>DOCUMENTO DI TRASPORTO</div>
+                        <div className="border-l border-white/60 text-center">{ddtWizardForm.numeroDdt || "-"}</div>
+                        <div className="border-l border-white/60 text-center">{formatDdtDateLabel(ddtWizardForm.data).split(",")[0] || "-"}</div>
+                      </div>
+                      <div className="border-t border-[#9ca3af] bg-[#0b8fd1] px-2 py-1 text-[11px] font-bold italic text-white">MITTENTE/CEDENTE</div>
+                      <div className="grid grid-cols-[1fr_180px] border-t border-[#9ca3af] text-[11px] font-semibold italic">
+                        <div className="px-2 py-1">HTS MED S.R.L. - Partita IVA: 02759040641</div>
+                        <div className="border-l border-[#9ca3af] px-2 py-1 text-right">Via Napoli 350 - Castellammare di Stabia (NA) 80053</div>
+                      </div>
+                      <div className="border-t border-[#9ca3af] bg-[#0b8fd1] px-2 py-1 text-right text-[11px] font-bold italic text-white">DESTINATARIO</div>
+                      <div className="grid grid-cols-[1fr_180px] border-t border-[#9ca3af] text-[11px] font-semibold italic">
+                        <div className="px-2 py-1">
+                          {(selectedSupplier?.nominativo || "-") + " - Partita IVA: " + (selectedSupplier?.piva || "-")}
+                        </div>
+                        <div className="border-l border-[#9ca3af] px-2 py-1 text-right">
+                          {[ddtWizardForm.indirizzoDestinazione || "-", selectedSupplier?.cap, selectedSupplier?.citta, selectedSupplier?.provincia]
+                            .filter(Boolean)
+                            .join(" ")}
+                        </div>
+                      </div>
+                      <div className="border-t border-[#9ca3af] bg-[#0b8fd1] px-2 py-1 text-right text-[11px] font-bold italic text-white">Indirizzo Destinazione Merce:</div>
+                      <div className="border-t border-[#9ca3af] px-2 py-1 text-[11px] font-semibold italic">{ddtWizardForm.indirizzoDestinazione || "-"}</div>
+                      <div className="border-t border-[#9ca3af] bg-[#0b8fd1] px-2 py-1 text-[11px] font-bold italic text-white">CAUSALE DI TRASPORTO</div>
+                      <div className="border-t border-[#9ca3af] px-2 py-1 text-[11px] font-semibold italic">{selectedCausale?.descrizioneMovimento || "-"}</div>
+                      <table className="w-full border-collapse text-[10px]">
+                        <thead>
+                          <tr className="bg-[#0b8fd1] text-left text-white">
+                            <th className="border border-[#9ca3af] px-1 py-1 font-bold italic">Codice:</th>
+                            <th className="border border-[#9ca3af] px-1 py-1 font-bold italic">Descrizione:</th>
+                            <th className="border border-[#9ca3af] px-1 py-1 text-right font-bold italic">qt</th>
+                            <th className="border border-[#9ca3af] px-1 py-1 font-bold italic">Seriale</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {movementItems.length > 0 ? (
+                            movementItems.map((row) => (
+                              <tr key={`preview-ddt-${row.id}`}>
+                                <td className="border border-[#9ca3af] px-1 py-1">{row?.articolo?.codiceArticolo || "-"}</td>
+                                <td className="border border-[#9ca3af] px-1 py-1">{row?.articolo?.descrizione || "-"}</td>
+                                <td className="border border-[#9ca3af] px-1 py-1 text-right">{row?.quantita || 0}</td>
+                                <td className="border border-[#9ca3af] px-1 py-1">{row?.seriale || row?.seriali?.[0] || "-"}</td>
+                              </tr>
+                            ))
+                          ) : (
+                            <tr>
+                              <td colSpan={4} className="border border-[#9ca3af] px-1 py-2 text-center text-[#6b7280]">
+                                -
+                              </td>
+                            </tr>
+                          )}
+                        </tbody>
+                      </table>
+                    </div>
+                    <div className="min-h-[160px]" />
+                    <div className="border border-[#9ca3af] border-t-0">
+                      <div className="bg-[#0b8fd1] px-2 py-1 text-[11px] font-bold italic text-white">NOTE</div>
+                      <div className="min-h-[44px] px-2 py-1 text-[11px] font-semibold italic">
+                        {[ddtWizardForm.note, ddtWizardForm.note2].filter(Boolean).join(" - ") || "-"}
+                      </div>
+                      <div className="grid grid-cols-2 border-t border-[#9ca3af]">
+                        <div className="border-r border-[#9ca3af]">
+                          <div className="bg-[#0b8fd1] px-2 py-1 text-[11px] font-bold italic text-white">TRASPORTO A MEZZO</div>
+                          <div className="min-h-[52px] px-2 py-1 text-[11px] font-semibold italic">{ddtWizardForm.trasportoMezzo || "-"}</div>
+                        </div>
+                        <div>
+                          <div className="bg-[#0b8fd1] px-2 py-1 text-[11px] font-bold italic text-white">FIRMA CONDUCENTE</div>
+                          <div className="min-h-[30px] border-t border-[#9ca3af]" />
+                          <div className="bg-[#0b8fd1] px-2 py-1 text-[11px] font-bold italic text-white">FIRMA DESTINATARIO</div>
+                          <div className="min-h-[30px] border-t border-[#9ca3af]" />
+                        </div>
+                      </div>
+                    </div>
+                    <div className="mt-2 grid grid-cols-[1fr_1fr_170px] gap-2 border-t border-[#9ca3af] pt-2 text-[9px] text-[#1f2937]">
+                      <div>
+                        <strong>Sede Legale:</strong>
+                        <br />
+                        Via Napoli 350 - 80053
+                        <br />
+                        Castellammare di Stabia (NA)
+                        <br />
+                        P. IVA: 02759040641
+                      </div>
+                      <div>
+                        <strong>Sede Operativa:</strong>
+                        <br />
+                        Via Napoli 350 - 80053
+                        <br />
+                        Castellammare di Stabia (NA)
+                        <br />
+                        www.htsmed.com
+                      </div>
+                      <div className="flex flex-wrap items-end justify-end gap-1.5">
+                        <img src={iamerLogo} alt="IAMER" className="max-h-6 max-w-[52px] object-contain" />
+                        <img src={iso9001Logo} alt="ISO 9001" className="max-h-6 max-w-[52px] object-contain" />
+                        <img src={jasAnzLogo} alt="JAS ANZ" className="max-h-6 max-w-[52px] object-contain" />
+                        <img src={certExtraLogo} alt="Certificazioni" className="max-h-6 max-w-[52px] object-contain" />
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            {ddtWizardError ? <p className="mt-3 text-sm text-rose-500">{ddtWizardError}</p> : null}
+
+            <div className="mt-4 flex items-center justify-end gap-2">
+              <button
+                type="button"
+                onClick={() => setDdtWizardOpen(false)}
+                className="rounded-md border border-[var(--border)] px-3 py-1.5 text-xs font-semibold text-[var(--muted)] hover:bg-[var(--hover)]"
+              >
+                Annulla
+              </button>
+              <button
+                type="button"
+                onClick={saveDdtWizard}
+                disabled={ddtWizardSaving}
+                className="rounded-md bg-emerald-500 px-3 py-1.5 text-xs font-semibold text-white hover:bg-emerald-600 disabled:cursor-not-allowed disabled:opacity-60"
+              >
+                {ddtWizardSaving ? "Emissione..." : "Emetti DDT"}
+              </button>
             </div>
           </div>
         </div>
@@ -2064,7 +4384,7 @@ export default function WarehouseGiacenze() {
                 <span className="text-xs uppercase tracking-[0.2em] text-[var(--muted)]">Descrizione</span>
                 <input
                   type="text"
-                  value={newArticleForm.descrizione}
+                  defaultValue=""
                   onChange={(event) => updateNewArticleField("descrizione", event.target.value)}
                   className="mt-2 w-full rounded-md border border-[var(--border)] bg-[var(--surface)] px-3 py-2 text-sm"
                 />
@@ -2074,7 +4394,7 @@ export default function WarehouseGiacenze() {
                 <span className="text-xs uppercase tracking-[0.2em] text-[var(--muted)]">Codice articolo</span>
                 <input
                   type="text"
-                  value={newArticleForm.codiceArticolo}
+                  defaultValue=""
                   onChange={(event) => updateNewArticleField("codiceArticolo", event.target.value)}
                   className="mt-2 w-full rounded-md border border-[var(--border)] bg-[var(--surface)] px-3 py-2 text-sm"
                 />
@@ -2084,7 +4404,7 @@ export default function WarehouseGiacenze() {
                 <span className="text-xs uppercase tracking-[0.2em] text-[var(--muted)]">Marca</span>
                 <input
                   type="text"
-                  value={newArticleForm.marca}
+                  defaultValue=""
                   onChange={(event) => updateNewArticleField("marca", event.target.value)}
                   className="mt-2 w-full rounded-md border border-[var(--border)] bg-[var(--surface)] px-3 py-2 text-sm"
                 />
@@ -2093,7 +4413,7 @@ export default function WarehouseGiacenze() {
               <label className="text-sm">
                 <span className="text-xs uppercase tracking-[0.2em] text-[var(--muted)]">Tipo</span>
                 <select
-                  value={newArticleForm.tipo}
+                  defaultValue={NEW_ARTICLE_TYPE_OPTIONS[0]}
                   onChange={(event) => updateNewArticleField("tipo", event.target.value)}
                   className="mt-2 w-full rounded-md border border-[var(--border)] bg-[var(--surface)] px-3 py-2 text-sm"
                 >
@@ -2108,7 +4428,7 @@ export default function WarehouseGiacenze() {
               <label className="text-sm">
                 <span className="text-xs uppercase tracking-[0.2em] text-[var(--muted)]">Unita di misura</span>
                 <select
-                  value={newArticleForm.unitaMisura}
+                  defaultValue={NEW_ARTICLE_UNIT_OPTIONS[0]}
                   onChange={(event) => updateNewArticleField("unitaMisura", event.target.value)}
                   className="mt-2 w-full rounded-md border border-[var(--border)] bg-[var(--surface)] px-3 py-2 text-sm"
                 >
@@ -2123,7 +4443,7 @@ export default function WarehouseGiacenze() {
               <label className="text-sm">
                 <span className="text-xs uppercase tracking-[0.2em] text-[var(--muted)]">Centro di costo</span>
                 <select
-                  value={newArticleForm.centroDiCosto}
+                  defaultValue={NEW_ARTICLE_COST_CENTER_OPTIONS[0]}
                   onChange={(event) => updateNewArticleField("centroDiCosto", event.target.value)}
                   className="mt-2 w-full rounded-md border border-[var(--border)] bg-[var(--surface)] px-3 py-2 text-sm"
                 >
@@ -2139,7 +4459,7 @@ export default function WarehouseGiacenze() {
                 <label className="flex items-center gap-2">
                   <input
                     type="checkbox"
-                    checked={newArticleForm.valorizza}
+                    defaultChecked={false}
                     onChange={(event) => updateNewArticleField("valorizza", event.target.checked)}
                     className="h-4 w-4"
                   />
@@ -2148,7 +4468,7 @@ export default function WarehouseGiacenze() {
                 <label className="flex items-center gap-2">
                   <input
                     type="checkbox"
-                    checked={newArticleForm.ammetteSeriale}
+                    defaultChecked={false}
                     onChange={(event) => updateNewArticleField("ammetteSeriale", event.target.checked)}
                     className="h-4 w-4"
                   />
@@ -2160,7 +4480,7 @@ export default function WarehouseGiacenze() {
                 <span className="text-xs uppercase tracking-[0.2em] text-[var(--muted)]">Prezzo di vendita</span>
                 <input
                   type="number"
-                  value={newArticleForm.prezzoVendita}
+                  defaultValue=""
                   onChange={(event) => updateNewArticleField("prezzoVendita", event.target.value)}
                   className="mt-2 w-full rounded-md border border-[var(--border)] bg-[var(--surface)] px-3 py-2 text-sm"
                 />
@@ -2170,7 +4490,7 @@ export default function WarehouseGiacenze() {
                 <span className="text-xs uppercase tracking-[0.2em] text-[var(--muted)]">Costo di acquisto</span>
                 <input
                   type="number"
-                  value={newArticleForm.costoAcquisto}
+                  defaultValue=""
                   onChange={(event) => updateNewArticleField("costoAcquisto", event.target.value)}
                   className="mt-2 w-full rounded-md border border-[var(--border)] bg-[var(--surface)] px-3 py-2 text-sm"
                 />
@@ -2180,7 +4500,7 @@ export default function WarehouseGiacenze() {
                 <span className="text-xs uppercase tracking-[0.2em] text-[var(--muted)]">Part number</span>
                 <input
                   type="text"
-                  value={newArticleForm.partNumber}
+                  defaultValue=""
                   onChange={(event) => updateNewArticleField("partNumber", event.target.value)}
                   className="mt-2 w-full rounded-md border border-[var(--border)] bg-[var(--surface)] px-3 py-2 text-sm"
                 />
@@ -2190,7 +4510,7 @@ export default function WarehouseGiacenze() {
                 <span className="text-xs uppercase tracking-[0.2em] text-[var(--muted)]">Vendor code</span>
                 <input
                   type="text"
-                  value={newArticleForm.vendorCode}
+                  defaultValue=""
                   onChange={(event) => updateNewArticleField("vendorCode", event.target.value)}
                   className="mt-2 w-full rounded-md border border-[var(--border)] bg-[var(--surface)] px-3 py-2 text-sm"
                 />
@@ -2201,7 +4521,7 @@ export default function WarehouseGiacenze() {
                 <div className="mt-2 flex items-center gap-2 text-sm">
                   <input
                     type="checkbox"
-                    checked={newArticleForm.alertGiacenza}
+                    defaultChecked={false}
                     onChange={(event) => updateNewArticleField("alertGiacenza", event.target.checked)}
                     className="h-4 w-4"
                   />
@@ -2211,7 +4531,7 @@ export default function WarehouseGiacenze() {
                   <span className="text-xs uppercase tracking-[0.2em] text-[var(--muted)]">Soglia alert</span>
                   <input
                     type="number"
-                    value={newArticleForm.giacenzaMinima}
+                    defaultValue=""
                     onChange={(event) => updateNewArticleField("giacenzaMinima", event.target.value)}
                     className="mt-2 w-full rounded-md border border-[var(--border)] bg-[var(--surface)] px-3 py-2 text-sm"
                   />
@@ -2223,7 +4543,7 @@ export default function WarehouseGiacenze() {
                 <label className="mt-2 flex items-center gap-2 text-sm">
                   <input
                     type="checkbox"
-                    checked={newArticleForm.obsoleto}
+                    defaultChecked={false}
                     onChange={(event) => updateNewArticleField("obsoleto", event.target.checked)}
                     className="h-4 w-4"
                   />

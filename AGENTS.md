@@ -55,3 +55,16 @@ Queste regole sono vincolanti per ogni modifica futura alla pagina `WarehouseGia
 ## Regola globale sidebar/menu utente (futuri progetti)
 - Nella vista mobile con overlay menu, i controlli utente devono stare nello stesso blocco: tema, supporto, profilo, informazioni, logout.
 - Evitare controlli utente isolati fuori dal gruppo profilo (es. toggle tema separato dal menu utente).
+
+## Baseline tabella "Articoli in DDT" (vincolante)
+- Obiettivo: evitare disallineamento header/body e overflow nelle card dettagli.
+- Desktop:
+  - Header separato dal body scrollabile.
+  - Header e body devono avere colonne identiche tramite `colgroup` condiviso (stesse width).
+  - Solo il body è scrollabile verticalmente.
+- Mobile:
+  - Tabella unica dentro contenitore scrollabile locale.
+  - Nessun `overflow-hidden` sui wrapper superiori che possa tagliare scrollbar o righe.
+- Valori mancanti:
+  - Nessuna colonna viene rimossa in base al contenuto.
+  - I campi mancanti mostrano sempre `-` (incluso `Seriale`) per coerenza visiva e semantica.

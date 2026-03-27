@@ -24,6 +24,7 @@ export const APP_SECTIONS = [
     icon: "fa-warehouse",
     items: [
       "Giacenze",
+      "Piantina Magazzino",
       "DDT-Doc. di Trasporto",
       "Codici di Magazzino",
       "Causali/Depositi",
@@ -65,7 +66,9 @@ export const APP_SECTIONS = [
 ];
 
 const APP_NAV_ROUTES = {
-  Giacenze: "/warehouse/giacenze"
+  Giacenze: "/warehouse/giacenze",
+  "Piantina Magazzino": "/warehouse/mappe",
+  "DDT-Doc. di Trasporto": "/warehouse/ddt"
 };
 
 export default function AppLayout({
@@ -75,6 +78,7 @@ export default function AppLayout({
   defaultOpenSection = "ANALISI",
   mainClassName = "flex-1 px-6 py-6",
   fullscreen = false,
+  shellless = false,
   supportAction = null,
   profileAction = null,
   infoAction = null,
@@ -167,6 +171,14 @@ export default function AppLayout({
     }
     setMobileOpen(false);
   };
+
+  if (shellless) {
+    return (
+      <div className={`${fullscreen ? "h-screen overflow-hidden" : "min-h-screen"} bg-[var(--page-bg)] text-[var(--page-fg)]`}>
+        <main className={mainClassName}>{children}</main>
+      </div>
+    );
+  }
 
   return (
     <div className={`${fullscreen ? "h-screen overflow-hidden" : "min-h-screen"} bg-[var(--page-bg)] text-[var(--page-fg)]`}>
