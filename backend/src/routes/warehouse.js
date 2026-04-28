@@ -36,6 +36,25 @@ const toFiniteNumber = (value, fallback = 0) => {
 };
 const clamp = (value, min, max) => Math.min(Math.max(value, min), max);
 const normalizeMapName = (value) => String(value || "").trim();
+const pickFirst = (...values) => values.find((v) => v !== undefined && v !== null && String(v).trim() !== "");
+const normalizeLooseKey = (value) =>
+  String(value || "")
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .replace(/[^a-zA-Z0-9]/g, "")
+    .toLowerCase();
+const pickByAliases = (row, aliases = []) => {
+  const direct = aliases
+    .map((k) => row?.[k])
+    .find((v) => v !== undefined && v !== null && String(v).trim() !== "");
+  if (direct !== undefined) return direct;
+  const normalizedAliases = aliases.map(normalizeLooseKey);
+  for (const [k, v] of Object.entries(row || {})) {
+    if (v === undefined || v === null || String(v).trim() === "") continue;
+    if (normalizedAliases.includes(normalizeLooseKey(k))) return v;
+  }
+  return undefined;
+};
 const normalizeMapBlock = (block, index = 0) => {
   const idRaw = String(block?.id || "").trim();
   const labelRaw = String(block?.label || "").trim();
@@ -2425,5 +2444,188 @@ router.post("/scan-sessions/:id/scan", async (req, res) => {
   }
 });
 
+router.get("/riparazioni", async (req, res) => {
+  try {
+    ensureIndexesInBackground();
+    const db = getWarehouseDb();
+    const page = Math.max(parseInt(req.query.page || "1", 10), 1);
+    const limit = Math.min(Math.max(parseInt(req.query.limit || "50", 10), 10), 300);
+    const skip = (page - 1) * limit;
+    const search = String(req.query.search || "").trim();
+    const sortBy = String(req.query.sortBy || "dataIngresso").trim();
+    const sortDir = String(req.query.sortDir || "desc").toLowerCase() === "asc" ? 1 : -1;
+
+    const query = {};
+    if (search) {
+      const re = new RegExp(search.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"), "i");
+      query.$or = [
+        { Protocollo: re },
+        { "Descrizione Parte": re },
+        { "Part Number": re },
+        { "Serial Number": re },
+        { Cliente: re },
+        { Sistema: re },
+        { "Descrizione Problema": re },
+        { "Stato lavoro": re }
+      ];
+    }
+
+    const sortMap = {
+      protocollo: "Protocollo",
+      priorita: "Priorità",
+      esito: "Esito",
+      statoLavoro: "Stato lavoro",
+      dataIngresso: "Data Ingresso",
+      dataTermine: "Data termine",
+      numeroOrdine: "Numero Ordine",
+      descrizioneParte: "Descrizione Parte",
+      partNumber: "Part Number",
+      serialNumber: "Serial Number",
+      cliente: "Cliente",
+      sistema: "Sistema"
+    };
+    const sortField = sortMap[sortBy] || "Data Ingresso";
+    const sortSpec = { [sortField]: sortDir, Protocollo: sortDir };
+
+    const [rows, total] = await Promise.all([
+      db
+        .collection("Riparazioni")
+        .find(query, { projection: { _id: 0 } })
+        .sort(sortSpec)
+        .skip(skip)
+        .limit(limit)
+        .toArray(),
+      db.collection("Riparazioni").countDocuments(query)
+    ]);
+
+    const data = rows.map((row) => ({
+      protocollo: String(pickByAliases(row, ["Protocollo", "protocollo"]) || "").trim(),
+      priorita: String(pickByAliases(row, ["Priorità", "Priorita", "PRIORITA", "priorita", "priorità"]) || "")
+        .trim()
+        .toUpperCase(),
+      esito: String(pickByAliases(row, ["Esito", "esito", "ESITO"]) || "").trim(),
+      statoLavoro: String(pickByAliases(row, ["Stato lavoro", "Stato Lavoro", "statoLavoro", "STATO LAVORO"]) || "").trim(),
+      dataIngresso: pickByAliases(row, ["Data Ingresso", "Data_Ingresso", "dataIngresso", "DATA INGRESSO"]) || null,
+      dataTermine: pickByAliases(row, ["Data termine", "Data Termine", "Data_Termine", "dataTermine", "DATA TERMINE"]) || null,
+      numeroOrdine: String(
+        pickByAliases(row, [
+          "Numero Ordine",
+          "Numero ordine",
+          "N Ordine",
+          "N. Ordine",
+          "Num Ordine",
+          "cod_ordine",
+          "Cod Ordine",
+          "Cod_Ordine",
+          "codice_ordine"
+        ]) || ""
+      ).trim(),
+      descrizioneParte: String(pickByAliases(row, ["Descrizione Parte", "descrizioneParte", "DESCRIZIONE PARTE"]) || "").trim(),
+      partNumber: String(pickByAliases(row, ["Part Number", "partNumber", "PART NUMBER"]) || "").trim(),
+      serialNumber: String(pickByAliases(row, ["Serial Number", "serialNumber", "SERIAL NUMBER"]) || "").trim(),
+      cliente: String(pickByAliases(row, ["Cliente", "cliente", "CLIENTE"]) || "").trim(),
+      sistema: String(pickByAliases(row, ["Sistema", "sistema", "SISTEMA"]) || "").trim(),
+      descrizioneProblema: String(pickByAliases(row, ["Descrizione Problema", "descrizioneProblema", "DESCRIZIONE PROBLEMA"]) || "").trim(),
+      richiedente: String(pickByAliases(row, ["Richiedente", "richiedente", "RICHIEDENTE"]) || "").trim(),
+      etichetta: String(row.Etichetta || "").trim(),
+      noteEsito: String(row["Note Esito"] || "").trim(),
+      tecnicoRiparatore: String(row["Tecnico Riparatore"] || "").trim(),
+      costoParti: row["Costo delle parti"] ?? null,
+      oreLavoro: row["Ore di lavoro"] ?? null,
+      partsSostituite: String(row["Parti Sostituite"] || "").trim(),
+      note: String(row.Note || "").trim()
+    }));
+
+    return res.json({ page, limit, total, data });
+  } catch (error) {
+    return res.status(500).json({ errore: "Errore caricamento riparazioni", dettaglio: error.message });
+  }
+});
+
+router.post("/riparazioni", async (req, res) => {
+  try {
+    ensureIndexesInBackground();
+    const db = getWarehouseDb();
+    const payload = req.body || {};
+
+    const descrizioneParte = String(payload.descrizioneParte || "").trim();
+    const partNumber = String(payload.partNumber || "").trim();
+    const serialNumber = String(payload.serialNumber || "").trim();
+    const cliente = String(payload.cliente || "").trim();
+    const sistema = String(payload.sistema || "").trim();
+    const descrizioneProblema = String(payload.descrizioneProblema || "").trim();
+    const richiedente = String(payload.richiedente || "").trim();
+    const priorita = String(payload.priorita || "MEDIA").trim().toUpperCase();
+    const statoLavoro = String(payload.statoLavoro || "IN ATTESA").trim().toUpperCase();
+    const dataIngresso = payload.dataIngresso ? new Date(payload.dataIngresso) : new Date();
+
+    if (!descrizioneParte || !cliente || !sistema || !descrizioneProblema) {
+      return res.status(400).json({ errore: "Campi obbligatori mancanti" });
+    }
+
+    const now = new Date();
+    const year = now.getFullYear();
+    const prefix = `REP-${year}`;
+    const last = await db
+      .collection("Riparazioni")
+      .find({ Protocollo: new RegExp(`^${prefix}`) }, { projection: { _id: 0, Protocollo: 1 } })
+      .sort({ Protocollo: -1 })
+      .limit(1)
+      .toArray();
+    const lastCode = String(last?.[0]?.Protocollo || "");
+    const numMatch = lastCode.match(/(\d{6})$/);
+    const nextNum = numMatch ? Number(numMatch[1]) + 1 : 100001;
+    const protocollo = `${prefix}${String(nextNum).padStart(6, "0")}`;
+
+    const doc = {
+      Protocollo: protocollo,
+      Priorita: priorita,
+      Esito: "DA TESTARE SU SISTEMA",
+      "Stato lavoro": statoLavoro,
+      Data_Ingresso: Number.isNaN(dataIngresso.getTime()) ? now : dataIngresso,
+      Data_Termine: null,
+      "Descrizione Parte": descrizioneParte,
+      "Part Number": partNumber || null,
+      "Serial Number": serialNumber || null,
+      Cliente: cliente,
+      Sistema: sistema,
+      "Descrizione Problema": descrizioneProblema,
+      Richiedente: richiedente || null,
+      Etichetta: null,
+      "Note Esito": null,
+      "Tecnico Riparatore": null,
+      "Costo delle parti": null,
+      "Ore di lavoro": 0,
+      "Parti Sostituite": null,
+      Note: null,
+      CreationDate: now,
+      LastEditDate: now
+    };
+
+    await db.collection("Riparazioni").insertOne(doc);
+
+    return res.status(201).json({
+      ok: true,
+      riparazione: {
+        protocollo,
+        priorita,
+        statoLavoro,
+        dataIngresso: doc.Data_Ingresso,
+        descrizioneParte,
+        partNumber,
+        serialNumber,
+        cliente,
+        sistema,
+        descrizioneProblema,
+        richiedente
+      }
+    });
+  } catch (error) {
+    return res.status(500).json({ errore: "Errore creazione riparazione", dettaglio: error.message });
+  }
+});
+
 export default router;
+
+
 

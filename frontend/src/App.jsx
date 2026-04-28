@@ -7,6 +7,8 @@ import WarehouseDdt from "./pages/WarehouseDdt.jsx";
 import WarehouseMaps from "./pages/WarehouseMaps.jsx";
 import WarehouseCodici from "./pages/WarehouseCodici.jsx";
 import WarehouseCausaliDepositi from "./pages/WarehouseCausaliDepositi.jsx";
+import WarehouseRiparazioni from "./pages/WarehouseRiparazioni.jsx";
+import WarehouseChecklistInterne from "./pages/WarehouseChecklistInterne.jsx";
 
 export default function App() {
   return (
@@ -19,6 +21,8 @@ export default function App() {
       <Route path="/warehouse/codici" element={<WarehouseCodici />} />
       <Route path="/warehouse/causali" element={<WarehouseCausaliDepositi />} />
       <Route path="/warehouse/causali-depositi" element={<WarehouseCausaliDepositi />} />
+      <Route path="/warehouse/riparazioni" element={<WarehouseRiparazioni />} />
+      <Route path="/warehouse/checklist-interne" element={<WarehouseChecklistInterne />} />
       <Route path="/mobile-scan/:sessionId" element={<MobileScanPage />} />
       <Route path="*" element={<Navigate to="/" replace />} />
     </Routes>
