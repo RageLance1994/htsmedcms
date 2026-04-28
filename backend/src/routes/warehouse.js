@@ -1356,9 +1356,82 @@ router.get("/causali", async (req, res) => {
       };
     });
 
-    res.json({ tipo, data });
+    const depositiData = depositi
+      .map((d) => ({ cod: Number(d.Cod), descrizione: String(d.Descrizione || "").trim() }))
+      .filter((d) => Number.isFinite(d.cod))
+      .sort((a, b) => a.cod - b.cod);
+
+    res.json({ tipo, data, depositi: depositiData });
   } catch (error) {
     res.status(500).json({ errore: "Errore caricamento causali", dettaglio: error.message });
+  }
+});
+
+
+router.post("/causali", async (req, res) => {
+  try {
+    ensureIndexesInBackground();
+    const db = getWarehouseDb();
+    const body = req.body || {};
+
+    const cod = Number.parseInt(body.cod, 10);
+    if (!Number.isFinite(cod) || cod <= 0) {
+      return res.status(400).json({ errore: "Codice causale non valido" });
+    }
+
+    const descrizioneMovimento = String(body.descrizioneMovimento || "").trim();
+    if (!descrizioneMovimento) {
+      return res.status(400).json({ errore: "Descrizione movimento obbligatoria" });
+    }
+
+    const depositoIniziale = Number.parseInt(body.depositoIniziale, 10);
+    const depositoFinale = Number.parseInt(body.depositoFinale, 10);
+    if (!Number.isFinite(depositoIniziale) || !Number.isFinite(depositoFinale)) {
+      return res.status(400).json({ errore: "Deposito iniziale/finale non validi" });
+    }
+
+    const azioneDisponibilita = clamp(Math.trunc(toFiniteNumber(body.azioneDisponibilita, 0)), -1, 1);
+    const azioneFiscale = clamp(Math.trunc(toFiniteNumber(body.azioneFiscale, azioneDisponibilita)), -1, 1);
+    const nascondi = parseBool(body.nascondi, false);
+    const validoPerDdt = parseBool(body.validoPerDdt, true);
+    const note = String(body.note || "").trim();
+
+    const existing = await db.collection("Causali di magazzino").findOne({ cod }, { projection: { _id: 1 } });
+    if (existing) {
+      return res.status(409).json({ errore: `Esiste gia una causale con codice ${cod}` });
+    }
+
+    const now = new Date();
+    await db.collection("Causali di magazzino").insertOne({
+      cod,
+      "Descrizione Movimento": descrizioneMovimento,
+      "Deposito Iniziale": depositoIniziale,
+      "Deposito Finale": depositoFinale,
+      "Azione su Giacenza Fisica": azioneDisponibilita,
+      "Azione su Giacenza Fiscale": azioneFiscale,
+      "Valido per DDT": validoPerDdt,
+      Nascondi: nascondi,
+      Note: note,
+      CreationDate: now,
+      LastEditDate: now
+    });
+
+    return res.status(201).json({
+      ok: true,
+      data: {
+        cod,
+        descrizioneMovimento,
+        depositoIniziale,
+        depositoFinale,
+        azioneFisica: azioneDisponibilita,
+        azioneFiscale,
+        nascondi,
+        validoPerDdt,
+        note
+      }
+    });
+  } catch (error) {
+    return res.status(500).json({ errore: "Errore creazione causale", dettaglio: error.message });
   }
 });
 
@@ -2472,7 +2545,7 @@ router.get("/riparazioni", async (req, res) => {
 
     const sortMap = {
       protocollo: "Protocollo",
-      priorita: "Priorità",
+      priorita: "Prioritï¿½",
       esito: "Esito",
       statoLavoro: "Stato lavoro",
       dataIngresso: "Data Ingresso",
@@ -2500,7 +2573,7 @@ router.get("/riparazioni", async (req, res) => {
 
     const data = rows.map((row) => ({
       protocollo: String(pickByAliases(row, ["Protocollo", "protocollo"]) || "").trim(),
-      priorita: String(pickByAliases(row, ["Priorità", "Priorita", "PRIORITA", "priorita", "priorità"]) || "")
+      priorita: String(pickByAliases(row, ["Prioritï¿½", "Priorita", "PRIORITA", "priorita", "prioritï¿½"]) || "")
         .trim()
         .toUpperCase(),
       esito: String(pickByAliases(row, ["Esito", "esito", "ESITO"]) || "").trim(),
@@ -2625,7 +2698,93 @@ router.post("/riparazioni", async (req, res) => {
   }
 });
 
+router.patch("/riparazioni/:protocollo", async (req, res) => {
+  try {
+    ensureIndexesInBackground();
+    const db = getWarehouseDb();
+    const protocollo = String(req.params.protocollo || "").trim();
+    if (!protocollo) {
+      return res.status(400).json({ errore: "Protocollo non valido" });
+    }
+
+    const payload = req.body || {};
+    const mode = String(payload.mode || "edit").trim().toLowerCase();
+
+    const existing = await db
+      .collection("Riparazioni")
+      .findOne({ Protocollo: protocollo }, { projection: { _id: 0, Protocollo: 1 } });
+    if (!existing) {
+      return res.status(404).json({ errore: "Riparazione non trovata" });
+    }
+
+    const update = { LastEditDate: new Date() };
+
+    if (mode === "cancel") {
+      update["Stato lavoro"] = "ANNULLATO";
+      update.Esito = "ANNULLATA";
+      update["Data Termine"] = new Date();
+      if (payload.note !== undefined) update.Note = String(payload.note || "").trim() || null;
+    } else if (mode === "esito") {
+      if (payload.esito !== undefined) update.Esito = String(payload.esito || "").trim().toUpperCase();
+      if (payload.statoLavoro !== undefined) {
+        update["Stato lavoro"] = String(payload.statoLavoro || "").trim().toUpperCase();
+      }
+      if (payload.dataTermine !== undefined && payload.dataTermine !== "") {
+        const dt = new Date(payload.dataTermine);
+        if (!Number.isNaN(dt.getTime())) update["Data Termine"] = dt;
+      }
+      if (payload.lavoroSvolto !== undefined) update["Note Esito"] = String(payload.lavoroSvolto || "").trim() || null;
+      if (payload.tecnicoRiparatore !== undefined) {
+        update["Tecnico Riparatore"] = String(payload.tecnicoRiparatore || "").trim() || null;
+      }
+      if (payload.oreLavoro !== undefined && payload.oreLavoro !== "") {
+        const ore = Number(payload.oreLavoro);
+        if (Number.isFinite(ore)) update["Ore di lavoro"] = ore;
+      }
+      if (payload.costoParti !== undefined && payload.costoParti !== "") {
+        const costo = Number(payload.costoParti);
+        if (Number.isFinite(costo)) update["Costo delle parti"] = costo;
+      }
+      if (payload.partiSostituite !== undefined) {
+        update["Parti Sostituite"] = String(payload.partiSostituite || "").trim() || null;
+      }
+      if (payload.note !== undefined) update.Note = String(payload.note || "").trim() || null;
+    } else {
+      if (payload.descrizioneParte !== undefined) {
+        update["Descrizione Parte"] = String(payload.descrizioneParte || "").trim();
+      }
+      if (payload.partNumber !== undefined) update["Part Number"] = String(payload.partNumber || "").trim() || null;
+      if (payload.serialNumber !== undefined) {
+        update["Serial Number"] = String(payload.serialNumber || "").trim() || null;
+      }
+      if (payload.cliente !== undefined) update.Cliente = String(payload.cliente || "").trim();
+      if (payload.sistema !== undefined) update.Sistema = String(payload.sistema || "").trim();
+      if (payload.descrizioneProblema !== undefined) {
+        update["Descrizione Problema"] = String(payload.descrizioneProblema || "").trim();
+      }
+      if (payload.priorita !== undefined) update.Priorita = String(payload.priorita || "").trim().toUpperCase();
+      if (payload.richiedente !== undefined) update.Richiedente = String(payload.richiedente || "").trim() || null;
+      if (payload.statoLavoro !== undefined) {
+        update["Stato lavoro"] = String(payload.statoLavoro || "").trim().toUpperCase();
+      }
+      if (payload.dataIngresso !== undefined && payload.dataIngresso !== "") {
+        const di = new Date(payload.dataIngresso);
+        if (!Number.isNaN(di.getTime())) update["Data Ingresso"] = di;
+      }
+      if (payload.dataTermine !== undefined && payload.dataTermine !== "") {
+        const dt = new Date(payload.dataTermine);
+        if (!Number.isNaN(dt.getTime())) update["Data Termine"] = dt;
+      }
+    }
+
+    await db.collection("Riparazioni").updateOne({ Protocollo: protocollo }, { $set: update });
+    return res.json({ ok: true });
+  } catch (error) {
+    return res.status(500).json({ errore: "Errore aggiornamento riparazione", dettaglio: error.message });
+  }
+});
 export default router;
+
 
 
 

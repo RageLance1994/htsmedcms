@@ -4216,8 +4216,8 @@ export default function WarehouseGiacenze() {
                   </div>
                 </div>
 
-                <div className="min-h-0 overflow-y-auto rounded-md border border-[var(--border)] bg-[var(--surface-soft)] p-3">
-                  <div className="mx-auto min-h-full w-full max-w-[820px] bg-white p-6 text-black shadow-sm">
+                <div className="h-full min-h-0 overflow-y-auto overscroll-contain rounded-md border border-[var(--border)] bg-[var(--surface-soft)] p-3 pb-6">
+                  <div className="mx-auto mb-3 w-full max-w-[820px] bg-white p-6 text-black shadow-sm">
                     <div className="border border-[#9ca3af]">
                       <div className="grid min-h-[66px] grid-cols-2 items-center px-4 py-2">
                         <div className="flex items-center">

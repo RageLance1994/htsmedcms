@@ -56,6 +56,11 @@ Queste regole sono vincolanti per ogni modifica futura alla pagina `WarehouseGia
 - Nella vista mobile con overlay menu, i controlli utente devono stare nello stesso blocco: tema, supporto, profilo, informazioni, logout.
 - Evitare controlli utente isolati fuori dal gruppo profilo (es. toggle tema separato dal menu utente).
 
+## Regola globale controlli UI (design system)
+- Input, select e bottoni di filtro/toolbar devono avere altezza coerente nella stessa riga (no componenti "sfasati").
+- Le select devono usare caret custom con padding destro adeguato (caret mai attaccato al bordo destro).
+- Evitare mix improvvisati di classi per i controlli: usare classi UI condivise e riutilizzabili (baseline stile shadcn-like).
+
 ## Baseline tabella "Articoli in DDT" (vincolante)
 - Obiettivo: evitare disallineamento header/body e overflow nelle card dettagli.
 - Desktop:

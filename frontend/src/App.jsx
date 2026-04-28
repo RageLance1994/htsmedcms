@@ -9,12 +9,14 @@ import WarehouseCodici from "./pages/WarehouseCodici.jsx";
 import WarehouseCausaliDepositi from "./pages/WarehouseCausaliDepositi.jsx";
 import WarehouseRiparazioni from "./pages/WarehouseRiparazioni.jsx";
 import WarehouseChecklistInterne from "./pages/WarehouseChecklistInterne.jsx";
+import OffertePage from "./pages/Offerte.jsx";
 
 export default function App() {
   return (
     <Routes>
       <Route path="/" element={<AccessPage />} />
       <Route path="/dashboard" element={<DashboardPage />} />
+      <Route path="/offerte" element={<OffertePage />} />
       <Route path="/warehouse/giacenze" element={<WarehouseGiacenze />} />
       <Route path="/warehouse/mappe" element={<WarehouseMaps />} />
       <Route path="/warehouse/ddt" element={<WarehouseDdt />} />

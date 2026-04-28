@@ -9,6 +9,7 @@ import healthRouter from "./routes/health.js";
 import authRouter from "./routes/auth.js";
 import warehouseRouter from "./routes/warehouse.js";
 import warehouseChecklistRouter from "./routes/warehouseChecklist.js";
+import offerteRouter from "./routes/offerte.js";
 
 const app = express();
 const isProduction = process.env.NODE_ENV === "production" || !!process.env.K_SERVICE;
@@ -65,6 +66,7 @@ app.use("/api/auth", authRouter);
 app.use("/api/health", healthRouter);
 app.use("/api/warehouse", warehouseRouter);
 app.use("/api/warehouse", warehouseChecklistRouter);
+app.use("/api/offerte", offerteRouter);
 
 if (isProduction) {
   const __filename = fileURLToPath(import.meta.url);
@@ -83,6 +85,12 @@ app.use((req, res) => {
   res.status(404).json({
     errore: "Rotta non trovata"
   });
+});
+
+app.use((error, req, res, next) => {
+  console.error("[api/unhandled]", error);
+  if (res.headersSent) return next(error);
+  return res.status(500).json({ errore: "Errore interno API." });
 });
 
 export default app;

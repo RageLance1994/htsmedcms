@@ -19,6 +19,20 @@
   .warehouse-table {
     min-width: 1080px;
   }
+  .warehouse-table th,
+  .warehouse-table td,
+  .table-dense th,
+  .table-dense td {
+    white-space: nowrap !important;
+    word-break: keep-all !important;
+    overflow-wrap: normal !important;
+  }
+  .warehouse-table th > *,
+  .warehouse-table td > *,
+  .table-dense th > *,
+  .table-dense td > * {
+    white-space: nowrap !important;
+  }
 }
 
 @tailwind base;
@@ -80,6 +94,61 @@ html.dark {
 
 .text-balance {
   text-wrap: balance;
+}
+
+/* Shared form controls baseline (shadcn-like rhythm) */
+.ui-control {
+  height: 2.5rem;
+  border: 1px solid var(--border);
+  border-radius: 0.375rem;
+  background: var(--surface);
+  color: var(--page-fg);
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.06);
+  outline: none;
+}
+
+.ui-control:focus,
+.ui-control:focus-within {
+  border-color: var(--muted);
+}
+
+.ui-control-sm {
+  height: 2.25rem;
+  border: 1px solid var(--border);
+  border-radius: 0.375rem;
+  background: var(--surface);
+  color: var(--page-fg);
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.06);
+  outline: none;
+}
+
+.ui-select-wrap {
+  position: relative;
+}
+
+.ui-select {
+  appearance: none;
+  padding-right: 2.25rem;
+}
+
+.ui-select-caret {
+  pointer-events: none;
+  position: absolute;
+  right: 0.75rem;
+  top: 50%;
+  transform: translateY(-50%);
+  font-size: 10px;
+  color: var(--muted);
+}
+
+/* Global select caret spacing aligned with Offerte controls */
+select:not(.ui-select):not([multiple]) {
+  appearance: none;
+  padding-right: 2.25rem !important;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='10' height='10' viewBox='0 0 10 10'%3E%3Cpath d='M2 3.5l3 3 3-3' fill='none' stroke='%2394a3b8' stroke-width='1.5' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E");
+  background-repeat: no-repeat;
+  background-position: right 0.75rem center;
+  background-size: 10px 10px;
 }
 
 /* Dense rows for operational tables */

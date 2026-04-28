@@ -27,17 +27,19 @@ const runSshSql = (query) =>
   new Promise((resolve, reject) => {
     const remoteCommand = `${REMOTE_SQL_SSH} '${SQLCMD_REMOTE}'`;
     const child = spawn("ssh", [SSH_HOST, remoteCommand], { stdio: ["pipe", "pipe", "pipe"] });
-    let stdout = "";
-    let stderr = "";
+    const stdoutChunks = [];
+    const stderrChunks = [];
 
     child.stdout.on("data", (d) => {
-      stdout += d.toString("utf8");
+      stdoutChunks.push(d);
     });
     child.stderr.on("data", (d) => {
-      stderr += d.toString("utf8");
+      stderrChunks.push(d);
     });
     child.on("error", reject);
     child.on("close", (code) => {
+      const stdout = Buffer.concat(stdoutChunks).toString("utf8");
+      const stderr = Buffer.concat(stderrChunks).toString("utf8");
       if (code !== 0) {
         return reject(
           new Error(
