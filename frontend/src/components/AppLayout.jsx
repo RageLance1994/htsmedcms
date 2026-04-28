@@ -70,7 +70,9 @@ const APP_NAV_ROUTES = {
   "Piantina Magazzino": "/warehouse/mappe",
   "DDT-Doc. di Trasporto": "/warehouse/ddt",
   "Codici di Magazzino": "/warehouse/codici",
-  "Causali/Depositi": "/warehouse/causali"
+  "Causali/Depositi": "/warehouse/causali",
+  "Lab Riparazioni": "/warehouse/riparazioni",
+  "CheckList Interne": "/warehouse/checklist-interne"
 };
 
 export default function AppLayout({
