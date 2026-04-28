@@ -68,7 +68,9 @@ export const APP_SECTIONS = [
 const APP_NAV_ROUTES = {
   Giacenze: "/warehouse/giacenze",
   "Piantina Magazzino": "/warehouse/mappe",
-  "DDT-Doc. di Trasporto": "/warehouse/ddt"
+  "DDT-Doc. di Trasporto": "/warehouse/ddt",
+  "Codici di Magazzino": "/warehouse/codici",
+  "Causali/Depositi": "/warehouse/causali"
 };
 
 export default function AppLayout({
@@ -163,12 +165,13 @@ export default function AppLayout({
       setMobileOpen(false);
       return;
     }
-    if (onNavItem) {
-      onNavItem(item);
-    } else {
-      const route = APP_NAV_ROUTES[item];
-      if (route) navigate(route);
+    const route = APP_NAV_ROUTES[item];
+    if (route) {
+      navigate(route);
+      setMobileOpen(false);
+      return;
     }
+    if (onNavItem) onNavItem(item);
     setMobileOpen(false);
   };
 
@@ -495,3 +498,4 @@ export default function AppLayout({
     </div>
   );
 }
+

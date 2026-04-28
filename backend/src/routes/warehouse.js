@@ -1366,6 +1366,10 @@ router.get("/articoli", async (req, res) => {
     const data = rows.map((row) => ({
       codiceArticolo: row["Codice Articolo"],
       descrizione: row.Descrizione || "",
+      tipo: row.Tipo || "",
+      marca: row.Marca || "",
+      centroDiCosto: row["Centro di Costo"] || "",
+      valorizza: row.Valorizza === true,
       unitaMisura:
         row["UnitÃƒÂ  di Misura"] ||
         row["UnitÃ  di Misura"] ||
@@ -1375,7 +1379,13 @@ router.get("/articoli", async (req, res) => {
         "",
       ammetteSeriale: row["Ammette Seriale"] === true,
       obsoleto: row.Obsoleto === true,
-      costoAcquisto: row["Costo di Acquisto"] ?? null
+      costoAcquisto: row["Costo di Acquisto"] ?? null,
+      prezzoVendita: row["Prezzo di Vendita"] ?? null,
+      partNumber: row["Part Number"] || "",
+      vendorCode: row["Vendor Code"] || "",
+      alertGiacenza: row["Alert Giacenza"] === true,
+      giacenzaMinima: row["Giacenza Minina"] ?? null,
+      note: row.Note || ""
     }));
 
     res.json({ data });
