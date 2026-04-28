@@ -1,4 +1,6 @@
 $root = Split-Path -Parent $MyInvocation.MyCommand.Path
+$backendDir = Join-Path $root "backend"
+$frontendDir = Join-Path $root "frontend"
 
 function Stop-ProcessesOnPort {
     param(
@@ -21,8 +23,16 @@ function Stop-ProcessesOnPort {
 Stop-ProcessesOnPort -Port 3000
 Stop-ProcessesOnPort -Port 5173
 
-$backendCmd = "cd `"$root\backend`"; npx nodemon src/index.js"
-$frontendCmd = "cd `"$root\frontend`"; npm run dev"
+if (-not (Test-Path (Join-Path $backendDir "package.json"))) {
+    throw "Missing backend/package.json in $backendDir"
+}
 
-Start-Process powershell -ArgumentList "-NoExit", "-Command", $backendCmd
-Start-Process powershell -ArgumentList "-NoExit", "-Command", $frontendCmd
+if (-not (Test-Path (Join-Path $frontendDir "package.json"))) {
+    throw "Missing frontend/package.json in $frontendDir"
+}
+
+$backendCmd = "npm run dev"
+$frontendCmd = "npm run dev"
+
+Start-Process powershell -WorkingDirectory $backendDir -ArgumentList "-NoExit", "-Command", $backendCmd
+Start-Process powershell -WorkingDirectory $frontendDir -ArgumentList "-NoExit", "-Command", $frontendCmd

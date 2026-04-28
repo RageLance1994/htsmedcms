@@ -7,7 +7,7 @@ import { encryptString, hashString } from "../utils/encryption.js";
 
 dotenv.config();
 
-const MONGO_URI = process.env.MONGO_URI || "mongodb://127.0.0.1:27017/htsmedcms";
+const MONGO_URI = process.env.MONGO_URI || "mongodb://127.0.0.1:27017/htsmed";
 const SALT_ROUNDS = Number(process.env.PASSWORD_SALT_ROUNDS || 12);
 
 const admin = {
@@ -47,3 +47,4 @@ run().catch((error) => {
   console.error("Errore reset super admin:", error);
   process.exit(1);
 });
+

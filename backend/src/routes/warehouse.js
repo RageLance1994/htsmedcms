@@ -12,7 +12,11 @@ const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 const TEMPLATES_DIR = path.resolve(__dirname, "../templates");
 
-const getWarehouseDb = () => mongoose.connection.useDb("htstest", { useCache: true });
+const WAREHOUSE_DB_NAME =
+  String(process.env.WAREHOUSE_DB_NAME || "").trim() ||
+  mongoose.connection?.db?.databaseName ||
+  "htsmed";
+const getWarehouseDb = () => mongoose.connection.useDb(WAREHOUSE_DB_NAME, { useCache: true });
 
 const normalizeWarehouseCode = (value) => String(value || "").trim();
 const normalizeSerial = (value) => String(value || "").trim();

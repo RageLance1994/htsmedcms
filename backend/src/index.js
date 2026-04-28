@@ -5,7 +5,7 @@ import app from "./app.js";
 dotenv.config();
 
 const PORT = process.env.PORT || 3000;
-const MONGO_URI = process.env.MONGO_URI || "mongodb://127.0.0.1:27017/htsmedcms";
+const MONGO_URI = process.env.MONGO_URI || "mongodb://127.0.0.1:27017/htsmed";
 
 mongoose
   .connect(MONGO_URI)

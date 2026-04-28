@@ -1,7 +1,7 @@
 import mongoose from "mongoose";
 
-const MONGO_URI = process.env.MONGO_URI || "mongodb://127.0.0.1:27017/htsmedcms";
-const DB_NAME = "htstest";
+const MONGO_URI = process.env.MONGO_URI || "mongodb://127.0.0.1:27017/htsmed";
+const DB_NAME = process.env.WAREHOUSE_DB_NAME || "htsmed";
 const TARGET = "warehouse_giacenze";
 
 const buildWarehouseCacheRowsPipeline = (codes) => [
@@ -91,4 +91,5 @@ buildCache().catch((err) => {
   console.error(err);
   process.exit(1);
 });
+
 
