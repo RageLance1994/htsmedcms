@@ -25,6 +25,37 @@ const normalizeRecord = (row) => ({
   agenziaRiferimento: String(row?.agenziaRiferimento || "").trim()
 });
 
+const toApiTipo = (value) => {
+  const raw = String(value || "").trim().toLowerCase();
+  if (raw === "cliente") return "CLIENTE";
+  if (raw === "fornitore") return "FORNITORE";
+  if (raw === "cliente-fornitore") return "CLIENTE/FORNITORE";
+  return String(value || "").trim().toUpperCase();
+};
+
+const normalizePayload = (payload = {}) => ({
+  tipo: toApiTipo(payload.tipo),
+  nominativo: String(payload.nominativo || "").trim(),
+  piva: String(payload.piva || "").trim(),
+  codFiscale: String(payload.codFiscale || "").trim(),
+  indirizzo: String(payload.indirizzo || "").trim(),
+  citta: String(payload.citta || "").trim(),
+  cap: String(payload.cap || "").trim(),
+  provincia: String(payload.provincia || "").trim().toUpperCase(),
+  regione: String(payload.regione || "").trim(),
+  telefoni: String(payload.telefoni || "").trim(),
+  email: String(payload.email || "").trim(),
+  pec: String(payload.pec || "").trim(),
+  note: String(payload.note || "").trim(),
+  agenziaRiferimento: String(payload.agenziaRiferimento || "").trim()
+});
+
+const extractApiError = async (response, fallbackMessage) => {
+  const payload = await response.json().catch(() => ({}));
+  const message = String(payload?.errore || payload?.dettaglio || fallbackMessage || "").trim();
+  return message || fallbackMessage || "Errore richiesta";
+};
+
 const matchesSearch = (record, search) => {
   if (!search) return true;
   const needle = String(search || "").trim().toLowerCase();
@@ -83,4 +114,63 @@ export async function fetchClientiFornitori({ search = "", tipo = "all", limit =
       error: error instanceof Error ? error.message : "Fallback mock attivo"
     };
   }
+}
+
+export async function createClienteFornitore(payload, { signal } = {}) {
+  const body = normalizePayload(payload);
+  const response = await fetch(`${API_BASE}/api/warehouse/fornitori`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body),
+    signal
+  });
+  if (!response.ok) {
+    throw new Error(await extractApiError(response, "Errore creazione anagrafica"));
+  }
+  const data = await response.json().catch(() => ({}));
+  const record = normalizeRecord({
+    ...(payload || {}),
+    ...(data?.anagrafica || {}),
+    cod: data?.anagrafica?.cod
+  });
+  return { ok: true, record };
+}
+
+export async function updateClienteFornitore(cod, payload, { signal } = {}) {
+  const code = Number(cod);
+  if (!Number.isFinite(code)) {
+    throw new Error("Codice anagrafica non valido");
+  }
+  const body = normalizePayload(payload);
+  const response = await fetch(`${API_BASE}/api/warehouse/fornitori/${encodeURIComponent(String(code))}`, {
+    method: "PUT",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body),
+    signal
+  });
+  if (!response.ok) {
+    throw new Error(await extractApiError(response, "Errore modifica anagrafica"));
+  }
+  const data = await response.json().catch(() => ({}));
+  const record = normalizeRecord({
+    cod: code,
+    ...(payload || {}),
+    ...(data?.anagrafica || {})
+  });
+  return { ok: true, record };
+}
+
+export async function deleteClienteFornitore(cod, { signal } = {}) {
+  const code = Number(cod);
+  if (!Number.isFinite(code)) {
+    throw new Error("Codice anagrafica non valido");
+  }
+  const response = await fetch(`${API_BASE}/api/warehouse/fornitori/${encodeURIComponent(String(code))}`, {
+    method: "DELETE",
+    signal
+  });
+  if (!response.ok) {
+    throw new Error(await extractApiError(response, "Errore eliminazione anagrafica"));
+  }
+  return response.json().catch(() => ({ ok: true }));
 }

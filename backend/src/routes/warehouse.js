@@ -36,6 +36,16 @@ const toFiniteNumber = (value, fallback = 0) => {
 };
 const clamp = (value, min, max) => Math.min(Math.max(value, min), max);
 const normalizeMapName = (value) => String(value || "").trim();
+const normalizeCliForTipo = (value, fallback = "FORNITORE") => {
+  const text = String(value || "").trim().toUpperCase();
+  if (!text) return fallback;
+  const hasCliente = text.includes("CLIENTE");
+  const hasFornitore = text.includes("FORNITORE");
+  if (hasCliente && hasFornitore) return "CLIENTE/FORNITORE";
+  if (hasCliente) return "CLIENTE";
+  if (hasFornitore) return "FORNITORE";
+  return fallback;
+};
 const pickFirst = (...values) => values.find((v) => v !== undefined && v !== null && String(v).trim() !== "");
 const normalizeLooseKey = (value) =>
   String(value || "")
@@ -1538,7 +1548,7 @@ router.post("/fornitori", async (req, res) => {
     const db = getWarehouseDb();
     const payload = req.body || {};
 
-    const tipo = String(payload.tipo || "FORNITORE").trim().toUpperCase();
+    const tipo = normalizeCliForTipo(payload.tipo, "FORNITORE");
     const nominativo = String(payload.nominativo || "").trim();
     const piva = String(payload.piva || "").trim();
     const indirizzo = String(payload.indirizzo || "").trim();
@@ -1551,6 +1561,7 @@ router.post("/fornitori", async (req, res) => {
     const email = String(payload.email || "").trim();
     const pec = String(payload.pec || "").trim();
     const note = String(payload.note || "").trim();
+    const agenziaRiferimento = String(payload.agenziaRiferimento || "").trim();
 
     if (!nominativo) return res.status(400).json({ errore: "Nominativo obbligatorio" });
     if (!piva) return res.status(400).json({ errore: "P.IVA obbligatoria" });
@@ -1587,6 +1598,7 @@ router.post("/fornitori", async (req, res) => {
       email1: email,
       PEC: pec,
       Note: note,
+      "Agenzia di Riferimento": agenziaRiferimento,
       LastEditDate: now,
       CreationDate: now
     };
@@ -1605,11 +1617,136 @@ router.post("/fornitori", async (req, res) => {
         cap,
         provincia,
         regione,
-        note
+        note,
+        codFiscale,
+        telefoni,
+        email,
+        pec,
+        agenziaRiferimento
       }
     });
   } catch (error) {
     return res.status(500).json({ errore: "Errore creazione anagrafica", dettaglio: error.message });
+  }
+});
+
+router.put("/fornitori/:cod", async (req, res) => {
+  try {
+    ensureIndexesInBackground();
+    const db = getWarehouseDb();
+    const cod = Number(req.params.cod);
+    if (!Number.isFinite(cod)) {
+      return res.status(400).json({ errore: "Codice anagrafica non valido" });
+    }
+
+    const payload = req.body || {};
+    const tipo = normalizeCliForTipo(payload.tipo, "");
+    const nominativo = String(payload.nominativo || "").trim();
+    const piva = String(payload.piva || "").trim();
+    const indirizzo = String(payload.indirizzo || "").trim();
+    const citta = String(payload.citta || "").trim();
+    const cap = String(payload.cap || "").trim();
+    const provincia = String(payload.provincia || "").trim().toUpperCase();
+    const regione = String(payload.regione || "").trim();
+    const codFiscale = String(payload.codFiscale || "").trim();
+    const telefoni = String(payload.telefoni || "").trim();
+    const email = String(payload.email || "").trim();
+    const pec = String(payload.pec || "").trim();
+    const note = String(payload.note || "").trim();
+    const agenziaRiferimento = String(payload.agenziaRiferimento || "").trim();
+
+    if (!nominativo) return res.status(400).json({ errore: "Nominativo obbligatorio" });
+    if (!piva) return res.status(400).json({ errore: "P.IVA obbligatoria" });
+
+    const existing = await db
+      .collection("Cli_For")
+      .findOne({ COD: cod }, { projection: { _id: 0, COD: 1 } });
+    if (!existing) {
+      return res.status(404).json({ errore: "Anagrafica non trovata" });
+    }
+
+    const duplicate = await db.collection("Cli_For").findOne(
+      {
+        COD: { $ne: cod },
+        $or: [{ Nominativo: nominativo }, { PIVA: piva }]
+      },
+      { projection: { _id: 0, COD: 1 } }
+    );
+    if (duplicate) {
+      return res.status(409).json({ errore: "Anagrafica gia presente con stesso nominativo o P.IVA" });
+    }
+
+    const now = new Date();
+    const update = {
+      Tipo: tipo || "FORNITORE",
+      Nominativo: nominativo,
+      Indirizzo: indirizzo,
+      Citta: citta,
+      CAP: cap,
+      Provincia: provincia,
+      Regione: regione,
+      PIVA: piva,
+      "Cod Fiscale": codFiscale,
+      telefoni,
+      email1: email,
+      PEC: pec,
+      Note: note,
+      "Agenzia di Riferimento": agenziaRiferimento,
+      LastEditDate: now
+    };
+
+    await db.collection("Cli_For").updateOne({ COD: cod }, { $set: update });
+
+    return res.json({
+      ok: true,
+      anagrafica: {
+        cod,
+        tipo: update.Tipo,
+        nominativo,
+        piva,
+        codFiscale,
+        indirizzo,
+        citta,
+        cap,
+        provincia,
+        regione,
+        telefoni,
+        email,
+        pec,
+        note,
+        agenziaRiferimento
+      }
+    });
+  } catch (error) {
+    return res.status(500).json({ errore: "Errore aggiornamento anagrafica", dettaglio: error.message });
+  }
+});
+
+router.delete("/fornitori/:cod", async (req, res) => {
+  try {
+    ensureIndexesInBackground();
+    const db = getWarehouseDb();
+    const cod = Number(req.params.cod);
+    if (!Number.isFinite(cod)) {
+      return res.status(400).json({ errore: "Codice anagrafica non valido" });
+    }
+
+    const result = await db.collection("Cli_For").findOneAndDelete(
+      { COD: cod },
+      { projection: { _id: 0, COD: 1, Nominativo: 1 } }
+    );
+    const removed = result?.value || result;
+    if (!removed) {
+      return res.status(404).json({ errore: "Anagrafica non trovata" });
+    }
+
+    return res.json({
+      ok: true,
+      cod,
+      nominativo: String(removed.Nominativo || "").trim()
+    });
+  } catch (error) {
+    return res.status(500).json({ errore: "Errore eliminazione anagrafica", dettaglio: error.message });
   }
 });
 

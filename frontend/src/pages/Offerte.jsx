@@ -1,6 +1,6 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useDeferredValue, useEffect, useMemo, useRef, useState } from "react";
+import { useLocation, useNavigate } from "react-router-dom";
 import AppLayout from "../components/AppLayout.jsx";
-import { ClientiFornitoriPicker } from "../features/clienti-fornitori/index.js";
 import ankeLogo from "../assets/Anke.ico";
 import htsmedLogo from "../assets/HTS-Med-logo.png";
 import iamerLogo from "../assets/iamers-news.jpg";
@@ -15,31 +15,100 @@ const WIZARD_STEPS = [
   { id: "anagrafica", label: "Anagrafica cliente" },
   { id: "magazzino", label: "Codice magazzino" },
   { id: "pagamento", label: "Tipo pagamento" },
-  { id: "offerta", label: "Tipo offerta" },
+  { id: "clausole", label: "Clausole" },
   { id: "riepilogo", label: "Riepilogo" }
 ];
-const PAYMENT_TYPES = ["Bonifico 30 gg", "Bonifico 60 gg", "RIBA 30 gg", "RIBA 60 gg", "Contanti", "Carta"];
-const OFFER_TYPES = [
-  {
-    id: "standard",
-    label: "Standard",
-    clauses:
-      "Pagamento entro i termini concordati. Consegna franco magazzino venditore salvo accordi scritti. Eventuali resi previa autorizzazione."
-  },
-  {
-    id: "service",
-    label: "Service",
-    clauses:
-      "Interventi programmati inclusi. SLA di presa in carico entro 8 ore lavorative. Parti di consumo escluse se non diversamente pattuito."
-  },
-  {
-    id: "noleggio",
-    label: "Noleggio",
-    clauses:
-      "Canone mensile anticipato. Manutenzione ordinaria inclusa nel canone. Danni da uso improprio esclusi e fatturati separatamente."
-  }
+const PAYMENT_TYPES = [
+  "CONSUNTIVO",
+  "CTR DI MANUTENZIONE - MENSILITA' ANTICIPATE",
+  "CTR DI MANUTENZIONE BIMESTRI ANTICIPATI",
+  "CTR MANUTENZIONE - TRIMESTRI ANTICIPATI",
+  "INTERVENTO TECNICO",
+  "NOLEGGIO",
+  "RICAMBIO- PAGAMENTO 30GG DATA FATTURA",
+  "RICAMBIO-PAGAMENTO ANTICIPATO",
+  "VENDITA SISTEMA A FORNITORE ESTERO",
+  "VENDITA SISTEMA RM",
+  "VENDITA SISTEMA TC"
 ];
+const PAYMENT_TERMS_PRESET = {
+  CONSUNTIVO: `IVA: COME DA NORMATIVA VIGENTE. A VS. CARICO
+DECORRENZA: DALL'ACCETTAZIONE ORDINE FORMALIZZATO
+VALIDITA' OFFERTA: 30 GG DALLA DATA DI EMISSIONE DELLA PRESENTE:
+LA VALIDITA' DELLA PRESENTE OFFERTA E' SUBORDINATA ALLA VERIFICA PREVENTIVA DEL SISTEMA.
+PAGAMENTO: CANONI MENSILI ANTICIPATI`,
+  "CTR DI MANUTENZIONE - MENSILITA' ANTICIPATE": `IVA: COME DA NORMATIVA VIGENTE. A VS. CARICO:
+PAGAMENTO: VISTA FATTURA`,
+  "CTR DI MANUTENZIONE BIMESTRI ANTICIPATI": `IVA: COME DA NORMATIVA VIGENTE. A VS. CARICO
+DECORRENZA: DALL'ACCETTAZIONE ORDINE FORMALIZZATO
+VALIDITA' OFFERTA: 30 GG DALLA DATA DI EMISSIONE DELLA PRESENTE:
+LA VALIDITA' DELLA PRESENTE OFFERTA E' SUBORDINATA ALLA VERIFICA PREVENTIVA DEL SISTEMA.
+PAGAMENTO: CANONI BIMESTRALI ANTICIPATI`,
+  "CTR MANUTENZIONE - TRIMESTRI ANTICIPATI": `IVA: COME DA NORMATIVA VIGENTE. A VS. CARICO
+DECORRENZA: DALL'ACCETTAZIONE ORDINE FORMALIZZATO
+VALIDITA' OFFERTA: 30 GG DALLA DATA DI EMISSIONE DELLA PRESENTE:
+LA VALIDITA' DELLA PRESENTE OFFERTA E' SUBORDINATA ALLA VERIFICA PREVENTIVA DEL SISTEMA.
+PAGAMENTO: CANONI TRIMESTRALI ANTICIPATI`,
+  "INTERVENTO TECNICO": `IVA: COME DA NORMATIVA VIGENTE. A VS. CARICO
+DECORRENZA: DALL'ACCETTAZIONE ORDINE FORMALIZZATO
+VALIDITA' OFFERTA: 30 GG DALLA DATA DI EMISSIONE DELLA PRESENTE:
+LA VALIDITA' DELLA PRESENTE OFFERTA E' SUBORDINATA ALLA VERIFICA PREVENTIVA DEL SISTEMA.
+PAGAMENTO: CANONI TRIMESTRALI ANTICIPATI`,
+  NOLEGGIO: `IVA: COME DA NORMATIVA VIGENTE. A VS. CARICO:
+DECORRENZA: DALL'ACCETTAZIONE ORDINE FORMALIZZATO:
+TEMPI DI INTERVENTO: DA CONCORDARE:
+VALIDITA' OFFERTA: 30 GG DALLA DATA DI EMISSIONE DELLA PRESENTE:
+PAGAMENTO: VISTA FATTURA:`,
+  "RICAMBIO- PAGAMENTO 30GG DATA FATTURA": `IVA: COME DA NORMATIVA VIGENTE. A VS. CARICO
+DECORRENZA: DALL'ACCETTAZIONE ORDINE FORMALIZZATO
+TRASPORTO: NOSTRO CARICO:
+INSTALLAZIONE: VS CARICO:
+VALIDITA' OFFERTA: 30 GG DALLA DATA DI EMISSIONE DELLA PRESENTE. SALVO IL VENDUTO;
+PAGAMENTO: N XX Canoni mensili Posticipati, XX Canoni Anticipati all'ordine (corrispondenti agli ultimi XX canoni di Locazione).
+FIDEIUSSIONE: Il Cliente s'impegna a fornire fideiussione per l'intera cifra pari a XXXXXXX EUR oltre iva a copertura del noleggio operativo
+RISCATTO: Al termine dei XX mesi il Cliente ha la facolta' di riscattare il sistema per XXX,00 EUR oltre iva.
+GARANZIA: N. 12 mesi sui guasti derivanti da uso improprio delle apparecchiature o, comunque, dipendenti da cause diverse dall'uso normale. Sono, altresi', esclusi i guasti riconducibili a caso fortuito o di forza maggiore, da danneggiamenti colposi o dolosi, da alimentazione elettrica o raffreddamento difettosi. Sono, inoltre, esclusi dalla garanzia contrattuale, accessori quali materassini, poggiatesta, pedane, mezzi di contenzione ed accessori per il posizionamento del Paziente, materiali di consumo in genere, fantocci di calibrazione, iniettori, stampanti e videoregistratori, nonche' i collegati alle apparecchiature. Sono esclusi eventuali workstation e sistemi esterni all'apparecchiatura. Nel corso degli interventi di natura preventiva, saranno eseguiti i controlli previsti in check list. Tutti i controlli saranno effettuati secondo gli alti standard qualitativi e con strumenti sottoposti a controlli di qualita' e ricalibrati periodicamente.
+NOTA:
+Quadro elettrico, opere murarie, di protezionistica, sistemi di condizionamento e di refrigerazione, altre opere elettriche non specificate in offerta, necessarie a rendere i locali idonei ad accogliere le apparecchiature e a rendere idonei i passaggi delle stesse, sono da intendersi di competenza ed a carico dell'acquirente.`,
+  "RICAMBIO-PAGAMENTO ANTICIPATO": `IVA: COME DA NORMATIVA VIGENTE. A VS. CARICO:
+DECORRENZA: DALL'ACCETTAZIONE ORDINE FORMALIZZATO E PAGAMENTO INCASSATO:
+TRASPORTO: NOSTRO CARICO:
+MONTAGGIO: NOSTRO CARICO:
+TEMPI DI CONSEGNA: DA DEFINIRE IN BASE AD APPROVVIGIONAMENTO PARTI:
+N.B.: IL COSTO DELLE PARTI E' DA INTENDERSI CON RESO DELLE PARTI GUASTE. LA MANCATA RESTITUZIONE COMPORTA UN ULTERIORE COSTO PARI AL 100% DEL PREZZO ESPOSTO IN OFFERTA.
+VALIDITA' OFFERTA: 30 GG DALLA DATA DI EMISSIONE DELLA PRESENTE:
+PAGAMENTO: 100% ANTICIPATO`,
+  "VENDITA SISTEMA A FORNITORE ESTERO": `IVA: COME DA NORMATIVA VIGENTE. A VS. CARICO
+DECORRENZA: DALL'ACCETTAZIONE ORDINE FORMALIZZATO
+TRASPORTO: NOSTRO CARICO:
+MONTAGGIO: NOSTRO CARICO:
+TEMPI DI CONSEGNA: 7 GG DA ORDINE FORMALIZZATO E BONIFICO RICEVUTO
+GARANZIA: 6 MESI SULLE PARTI SOSTITUITE
 
+Il costo delle parti e' da intendersi "CON RESO". La mancata restituzione dei ricambi guasti prevede un ulteriore costo pari al 70% del prezzo esposto in offerta.
+VALIDITA' OFFERTA: 30 GG DALLA DATA DI EMISSIONE DELLA PRESENTE:
+PAGAMENTO: BONIFICO ANTICIPATO ALL'ORDINE`,
+  "VENDITA SISTEMA RM": `WARRANTY: System is sold "AS/IS" (as it is where it is), with NO warranty.
+PAYMENT: Full amount in advance.
+SHIPPING: within 3 working days after payment received.
+
+See further terms and conditions in the next page.`,
+  "VENDITA SISTEMA TC": `IVA: COME DA NORMATIVA VIGENTE. A VS. CARICO:
+DECORRENZA: DALL'ACCETTAZIONE ORDINE FORMALIZZATO E ANTICIPO INCASSATO:
+TRASPORTO: NOSTRO CARICO:
+TEMPI DI CONSEGNA: 90 GG DA "SITE READY" COMUNICATO DAL CLIENTE E VERIFICATO DA HTS MED (SALVO IMPREVISTI):
+INSTALLAZIONE: NOSTRO CARICO:
+GARANZIA: 12 MESI:
+LA GARANZIA PREVEDE: N. 2 MANUTENZIONI PREVENTIVE PER ANNO, INTERVENTI CORRETTIVI ILLIMITATI, ASSISTENZA REMOTA ILLIMITATA, TUTTE LE PARTI DI RICAMBIO INCLUSE.
+Non rientrano in garanzia i guasti derivanti da uso improprio delle apparecchiature o, comunque, dipendenti da cause diverse dall'uso normale.
+CLINICAL APPLICATION: N. 2 GIORNATE DA PIANIFICARE IN ACCORDO CON IL CLIENTE:
+VALIDITA' OFFERTA: 30 GG DALLA DATA DI EMISSIONE DELLA PRESENTE:
+NOTA:
+Quadro elettrico, opere murarie, compensatore di campo attivo, di protezionistica, sistemi di condizionamento e di refrigerazione, altre opere non specificate in offerta, necessarie a rendere i locali idonei ad accogliere le apparecchiature e a rendere idonei i passaggi delle stesse, sono da intendersi di competenza ed a carico dell'acquirente.
+PAGAMENTO:
+OPZIONE 1: 30% ANTICIPO. SALDO A MEZZO LEASING:
+OPZIONE 2: 40% DI ANTICIPO. 40% AD AVVISO MERCE PRONTA. SALDO AL COLLAUDO:`
+};
 const EMPTY_MANUAL_CUSTOMER = {
   nominativo: "",
   piva: "",
@@ -50,6 +119,24 @@ const EMPTY_MANUAL_CUSTOMER = {
   email: "",
   telefono: ""
 };
+const EMPTY_NEW_CUSTOMER_FORM = {
+  nominativo: "",
+  piva: "",
+  indirizzo: "",
+  citta: "",
+  cap: "",
+  provincia: "",
+  telefoni: "",
+  email: "",
+  pec: "",
+  note: ""
+};
+const WIZARD_DRAFT_STORAGE_KEY = "offerte_wizard_draft_v1";
+const WIZARD_DRAFT_SAVE_DEBOUNCE_MS = 900;
+const WIZARD_SEARCH_DEBOUNCE_MS = 130;
+const WIZARD_WAREHOUSE_LIMIT = 120;
+const WIZARD_CUSTOMER_LIMIT = 250;
+const WIZARD_CACHE_TTL_MS = 60_000;
 
 const formatCurrency = (value) =>
   new Intl.NumberFormat("it-IT", { style: "currency", currency: "EUR" }).format(
@@ -117,6 +204,8 @@ const normalizePreviewText = (value) => {
 };
 
 export default function OffertePage() {
+  const location = useLocation();
+  const navigate = useNavigate();
   const [rows, setRows] = useState([]);
   const [totals, setTotals] = useState(null);
   const [years, setYears] = useState([]);
@@ -141,19 +230,40 @@ export default function OffertePage() {
   const [conditionsTab, setConditionsTab] = useState("fornitura");
   const [offerWizardOpen, setOfferWizardOpen] = useState(false);
   const [wizardStep, setWizardStep] = useState(0);
-  const [wizardCustomerMode, setWizardCustomerMode] = useState("manual");
   const [wizardManualCustomer, setWizardManualCustomer] = useState(EMPTY_MANUAL_CUSTOMER);
-  const [wizardSelectedParty, setWizardSelectedParty] = useState(null);
+  const [wizardCustomerPickerOpen, setWizardCustomerPickerOpen] = useState(false);
+  const [wizardCustomerSearch, setWizardCustomerSearch] = useState("");
+  const [wizardCustomerSearchDebounced, setWizardCustomerSearchDebounced] = useState("");
+  const [wizardCustomerRows, setWizardCustomerRows] = useState([]);
+  const [wizardCustomerLoading, setWizardCustomerLoading] = useState(false);
+  const [wizardCustomerError, setWizardCustomerError] = useState("");
+  const [wizardCustomerSelectedCod, setWizardCustomerSelectedCod] = useState(null);
+  const [wizardCustomerCreateOpen, setWizardCustomerCreateOpen] = useState(false);
+  const [wizardCustomerCreateLoading, setWizardCustomerCreateLoading] = useState(false);
+  const [wizardCustomerCreateError, setWizardCustomerCreateError] = useState("");
+  const [wizardNewCustomerForm, setWizardNewCustomerForm] = useState(EMPTY_NEW_CUSTOMER_FORM);
   const [wizardWarehouseSearch, setWizardWarehouseSearch] = useState("");
+  const [wizardWarehouseSearchDebounced, setWizardWarehouseSearchDebounced] = useState("");
   const [wizardWarehouseRows, setWizardWarehouseRows] = useState([]);
   const [wizardWarehouseLoading, setWizardWarehouseLoading] = useState(false);
   const [wizardWarehouseError, setWizardWarehouseError] = useState("");
-  const [wizardSelectedWarehouse, setWizardSelectedWarehouse] = useState(null);
-  const [wizardQuantity, setWizardQuantity] = useState(1);
+  const [wizardWarehouseSelectedCode, setWizardWarehouseSelectedCode] = useState("");
+  const [wizardCartRows, setWizardCartRows] = useState([]);
   const [wizardPaymentType, setWizardPaymentType] = useState("");
+  const [wizardPaymentTerms, setWizardPaymentTerms] = useState("");
+  const [wizardClauseRows, setWizardClauseRows] = useState([]);
+  const [wizardClauseLoading, setWizardClauseLoading] = useState(false);
+  const [wizardClauseError, setWizardClauseError] = useState("");
   const [wizardOfferType, setWizardOfferType] = useState("");
+  const [wizardClauseText, setWizardClauseText] = useState("");
   const [wizardNotes, setWizardNotes] = useState("");
   const listRequestAbortRef = useRef(null);
+  const wizardDraftSaveTimerRef = useRef(null);
+  const wizardBootstrapHandledRef = useRef(false);
+  const wizardWarehouseCacheRef = useRef(new Map());
+  const wizardCustomerCacheRef = useRef(new Map());
+  const deferredWizardWarehouseRows = useDeferredValue(wizardWarehouseRows);
+  const deferredWizardCustomerRows = useDeferredValue(wizardCustomerRows);
 
   const loadRows = async () => {
     if (listRequestAbortRef.current) {
@@ -265,6 +375,14 @@ export default function OffertePage() {
     if (!detailModalOpen && !offerWizardOpen) return;
     const onEsc = (event) => {
       if (event.key !== "Escape") return;
+      if (wizardCustomerCreateOpen) {
+        setWizardCustomerCreateOpen(false);
+        return;
+      }
+      if (wizardCustomerPickerOpen) {
+        setWizardCustomerPickerOpen(false);
+        return;
+      }
       if (offerWizardOpen) {
         setOfferWizardOpen(false);
         return;
@@ -273,36 +391,221 @@ export default function OffertePage() {
     };
     window.addEventListener("keydown", onEsc);
     return () => window.removeEventListener("keydown", onEsc);
-  }, [detailModalOpen, offerWizardOpen]);
+  }, [detailModalOpen, offerWizardOpen, wizardCustomerPickerOpen, wizardCustomerCreateOpen]);
+
+  useEffect(() => {
+    const timer = setTimeout(() => {
+      setWizardWarehouseSearchDebounced(String(wizardWarehouseSearch || "").trim());
+    }, WIZARD_SEARCH_DEBOUNCE_MS);
+    return () => clearTimeout(timer);
+  }, [wizardWarehouseSearch]);
+
+  useEffect(() => {
+    const timer = setTimeout(() => {
+      setWizardCustomerSearchDebounced(String(wizardCustomerSearch || "").trim());
+    }, WIZARD_SEARCH_DEBOUNCE_MS);
+    return () => clearTimeout(timer);
+  }, [wizardCustomerSearch]);
 
   useEffect(() => {
     if (!offerWizardOpen) return;
     const controller = new AbortController();
-    const timer = setTimeout(async () => {
+    const normalizedSearch = String(wizardWarehouseSearchDebounced || "").trim();
+    const cacheKey = normalizedSearch.toLowerCase();
+    const cached = wizardWarehouseCacheRef.current.get(cacheKey);
+    const now = Date.now();
+    if (cached && now - cached.ts < WIZARD_CACHE_TTL_MS) {
+      setWizardWarehouseRows(cached.rows);
+    }
+
+    const run = async () => {
       setWizardWarehouseLoading(true);
       setWizardWarehouseError("");
       try {
-        const params = new URLSearchParams({ limit: "220" });
-        const trimmed = String(wizardWarehouseSearch || "").trim();
-        if (trimmed) params.set("search", trimmed);
+        const params = new URLSearchParams({ limit: String(WIZARD_WAREHOUSE_LIMIT) });
+        if (normalizedSearch) params.set("search", normalizedSearch);
         const res = await fetch(`${API_BASE}/api/warehouse/articoli?${params.toString()}`, { signal: controller.signal });
         if (!res.ok) throw new Error("Errore caricamento codici di magazzino.");
         const payload = await res.json();
-        setWizardWarehouseRows(Array.isArray(payload?.data) ? payload.data : []);
+        const nextRows = Array.isArray(payload?.data) ? payload.data : [];
+        wizardWarehouseCacheRef.current.set(cacheKey, { rows: nextRows, ts: Date.now() });
+        setWizardWarehouseRows(nextRows);
       } catch (err) {
         if (err?.name === "AbortError") return;
-        setWizardWarehouseRows([]);
+        if (!cached) setWizardWarehouseRows([]);
         setWizardWarehouseError(err?.message || "Errore caricamento codici di magazzino.");
       } finally {
         setWizardWarehouseLoading(false);
       }
-    }, 220);
+    };
+
+    run();
+    return () => controller.abort();
+  }, [offerWizardOpen, wizardWarehouseSearchDebounced]);
+
+  useEffect(() => {
+    if (!offerWizardOpen || !wizardCustomerPickerOpen) return;
+    const controller = new AbortController();
+    const normalizedSearch = String(wizardCustomerSearchDebounced || "").trim();
+    const cacheKey = normalizedSearch.toLowerCase();
+    const cached = wizardCustomerCacheRef.current.get(cacheKey);
+    const now = Date.now();
+    if (cached && now - cached.ts < WIZARD_CACHE_TTL_MS) {
+      setWizardCustomerRows(cached.rows);
+    }
+
+    const run = async () => {
+      setWizardCustomerLoading(true);
+      setWizardCustomerError("");
+      try {
+        const params = new URLSearchParams({ tipo: "clienti", limit: String(WIZARD_CUSTOMER_LIMIT) });
+        if (normalizedSearch) params.set("search", normalizedSearch);
+        const res = await fetch(`${API_BASE}/api/warehouse/fornitori?${params.toString()}`, { signal: controller.signal });
+        if (!res.ok) throw new Error("Errore caricamento clienti.");
+        const payload = await res.json();
+        const nextRows = Array.isArray(payload?.data) ? payload.data : [];
+        wizardCustomerCacheRef.current.set(cacheKey, { rows: nextRows, ts: Date.now() });
+        setWizardCustomerRows(nextRows);
+      } catch (err) {
+        if (err?.name === "AbortError") return;
+        if (!cached) setWizardCustomerRows([]);
+        setWizardCustomerError(err?.message || "Errore caricamento clienti.");
+      } finally {
+        setWizardCustomerLoading(false);
+      }
+    };
+
+    run();
+    return () => controller.abort();
+  }, [offerWizardOpen, wizardCustomerPickerOpen, wizardCustomerSearchDebounced]);
+
+  useEffect(() => {
+    if (!offerWizardOpen) return;
+    const controller = new AbortController();
+    const loadClauseTemplates = async () => {
+      setWizardClauseLoading(true);
+      setWizardClauseError("");
+      try {
+        const res = await fetch(`${API_BASE}/api/offerte/clausole`, { signal: controller.signal });
+        if (!res.ok) throw new Error("Errore caricamento clausole.");
+        const payload = await res.json();
+        const rows = Array.isArray(payload?.data)
+          ? payload.data
+              .map((item) => ({
+                cod: String(item?.cod || "").trim(),
+                tipoOfferta: String(item?.tipoOfferta || "").trim(),
+                condizioni: String(item?.condizioni || "").trim()
+              }))
+              .filter((item) => item.cod && item.tipoOfferta && item.condizioni)
+          : [];
+        setWizardClauseRows(rows);
+      } catch (err) {
+        if (err?.name === "AbortError") return;
+        setWizardClauseRows([]);
+        setWizardClauseError(err?.message || "Errore caricamento clausole.");
+      } finally {
+        setWizardClauseLoading(false);
+      }
+    };
+
+    loadClauseTemplates();
+    return () => controller.abort();
+  }, [offerWizardOpen]);
+
+  useEffect(() => {
+    if (!offerWizardOpen) return;
+    const cacheKey = "";
+    const cached = wizardCustomerCacheRef.current.get(cacheKey);
+    if (cached && Date.now() - cached.ts < WIZARD_CACHE_TTL_MS) return;
+    const controller = new AbortController();
+    const warmup = async () => {
+      try {
+        const params = new URLSearchParams({ tipo: "clienti", limit: String(WIZARD_CUSTOMER_LIMIT) });
+        const res = await fetch(`${API_BASE}/api/warehouse/fornitori?${params.toString()}`, { signal: controller.signal });
+        if (!res.ok) return;
+        const payload = await res.json();
+        const rows = Array.isArray(payload?.data) ? payload.data : [];
+        wizardCustomerCacheRef.current.set(cacheKey, { rows, ts: Date.now() });
+      } catch {
+        // warmup is best-effort
+      }
+    };
+    warmup();
+    return () => controller.abort();
+  }, [offerWizardOpen]);
+
+  useEffect(() => {
+    if (!offerWizardOpen || wizardClauseRows.length === 0) return;
+    const selectedKey = String(wizardOfferType || "").trim();
+    const match =
+      wizardClauseRows.find((item) => item.cod === selectedKey) ||
+      wizardClauseRows.find((item) => item.tipoOfferta.toUpperCase() === selectedKey.toUpperCase()) ||
+      null;
+    if (!match) {
+      setWizardOfferType(String(wizardClauseRows[0].cod));
+      if (!String(wizardClauseText || "").trim()) {
+        setWizardClauseText(String(wizardClauseRows[0].condizioni || ""));
+      }
+      return;
+    }
+    if (match.cod !== selectedKey) {
+      setWizardOfferType(String(match.cod));
+    }
+    if (!String(wizardClauseText || "").trim()) {
+      setWizardClauseText(String(match.condizioni || ""));
+    }
+  }, [offerWizardOpen, wizardClauseRows, wizardOfferType, wizardClauseText]);
+
+  useEffect(() => {
+    if (!offerWizardOpen) return undefined;
+    if (wizardDraftSaveTimerRef.current) {
+      clearTimeout(wizardDraftSaveTimerRef.current);
+    }
+    wizardDraftSaveTimerRef.current = setTimeout(() => {
+      try {
+        const payload = {
+          wizardStep,
+          wizardManualCustomer,
+          wizardWarehouseSearch,
+          // Avoid persisting transient row selection to reduce synchronous localStorage churn.
+          wizardCartRows: Array.isArray(wizardCartRows)
+            ? wizardCartRows.map((row) => ({
+                codiceArticolo: String(row?.codiceArticolo || "").trim(),
+                descrizione: String(row?.descrizione || "").trim(),
+                centroDiCosto: String(row?.centroDiCosto || "").trim(),
+                quantita: Math.max(1, Number.parseInt(String(row?.quantita || "1"), 10) || 1)
+              }))
+            : [],
+          wizardPaymentType,
+          wizardPaymentTerms,
+          wizardOfferType,
+          wizardClauseText,
+          wizardNotes,
+          updatedAt: new Date().toISOString()
+        };
+        localStorage.setItem(WIZARD_DRAFT_STORAGE_KEY, JSON.stringify(payload));
+      } catch {
+        // ignore localStorage persistence errors
+      }
+    }, WIZARD_DRAFT_SAVE_DEBOUNCE_MS);
 
     return () => {
-      clearTimeout(timer);
-      controller.abort();
+      if (wizardDraftSaveTimerRef.current) {
+        clearTimeout(wizardDraftSaveTimerRef.current);
+      }
     };
-  }, [offerWizardOpen, wizardWarehouseSearch]);
+  }, [
+    offerWizardOpen,
+    wizardStep,
+    wizardManualCustomer,
+    wizardWarehouseSearch,
+    wizardCartRows,
+    wizardPaymentType,
+    wizardPaymentTerms,
+    wizardOfferType,
+    wizardClauseText,
+    wizardNotes
+  ]);
 
   const openDetailModal = (cod) => {
     if (!cod) return;
@@ -311,21 +614,377 @@ export default function OffertePage() {
     setDetailModalOpen(true);
   };
 
-  const openOfferWizard = () => {
+  const resetWizardState = () => {
     setWizardStep(0);
-    setWizardCustomerMode("manual");
     setWizardManualCustomer(EMPTY_MANUAL_CUSTOMER);
-    setWizardSelectedParty(null);
+    setWizardCustomerPickerOpen(false);
+    setWizardCustomerSearch("");
+    setWizardCustomerSearchDebounced("");
+    setWizardCustomerRows([]);
+    setWizardCustomerError("");
+    setWizardCustomerSelectedCod(null);
+    setWizardCustomerCreateOpen(false);
+    setWizardCustomerCreateError("");
+    setWizardNewCustomerForm(EMPTY_NEW_CUSTOMER_FORM);
     setWizardWarehouseSearch("");
+    setWizardWarehouseSearchDebounced("");
     setWizardWarehouseRows([]);
     setWizardWarehouseError("");
-    setWizardSelectedWarehouse(null);
-    setWizardQuantity(1);
+    setWizardWarehouseSelectedCode("");
+    setWizardCartRows([]);
     setWizardPaymentType("");
+    setWizardPaymentTerms("");
+    setWizardClauseRows([]);
+    setWizardClauseError("");
     setWizardOfferType("");
+    setWizardClauseText("");
     setWizardNotes("");
+  };
+
+  const loadWizardDraft = () => {
+    try {
+      const raw = localStorage.getItem(WIZARD_DRAFT_STORAGE_KEY);
+      if (!raw) return false;
+      const draft = JSON.parse(raw);
+      if (!draft || typeof draft !== "object") return false;
+
+      setWizardStep(Math.min(Math.max(Number(draft.wizardStep) || 0, 0), WIZARD_STEPS.length - 1));
+      setWizardManualCustomer({
+        ...EMPTY_MANUAL_CUSTOMER,
+        ...(draft.wizardManualCustomer || {})
+      });
+      setWizardWarehouseSearch(String(draft.wizardWarehouseSearch || ""));
+      setWizardWarehouseSearchDebounced(String(draft.wizardWarehouseSearch || "").trim());
+      setWizardWarehouseSelectedCode(String(draft.wizardWarehouseSelectedCode || ""));
+      setWizardCartRows(
+        Array.isArray(draft.wizardCartRows)
+          ? draft.wizardCartRows
+              .map((row) => ({
+                codiceArticolo: String(row?.codiceArticolo || "").trim(),
+                descrizione: String(row?.descrizione || "").trim(),
+                centroDiCosto: String(row?.centroDiCosto || "").trim(),
+                quantita: Math.max(1, Number.parseInt(String(row?.quantita || "1"), 10) || 1)
+              }))
+              .filter((row) => row.codiceArticolo)
+          : []
+      );
+      setWizardPaymentType(String(draft.wizardPaymentType || ""));
+      setWizardPaymentTerms(String(draft.wizardPaymentTerms || ""));
+      setWizardOfferType(String(draft.wizardOfferType || ""));
+      setWizardClauseText(String(draft.wizardClauseText || ""));
+      setWizardNotes(String(draft.wizardNotes || ""));
+      return true;
+    } catch {
+      return false;
+    }
+  };
+
+  const openOfferWizard = () => {
+    const restored = loadWizardDraft();
+    if (!restored) {
+      resetWizardState();
+    } else {
+      setWizardCustomerPickerOpen(false);
+      setWizardCustomerCreateOpen(false);
+      setWizardCustomerCreateError("");
+    }
     setOfferWizardOpen(true);
   };
+
+  const clearWizardDraft = () => {
+    try {
+      localStorage.removeItem(WIZARD_DRAFT_STORAGE_KEY);
+    } catch {
+      // ignore
+    }
+    resetWizardState();
+  };
+
+  useEffect(() => {
+    if (wizardBootstrapHandledRef.current) return;
+    const params = new URLSearchParams(location.search || "");
+    if (params.get("openWizard") !== "1") return;
+    wizardBootstrapHandledRef.current = true;
+    openOfferWizard();
+    params.delete("openWizard");
+    params.delete("from");
+    params.delete("clienteCod");
+    params.delete("tipo");
+    params.delete("nominativo");
+    const nextSearch = params.toString();
+    navigate(
+      {
+        pathname: location.pathname,
+        search: nextSearch ? `?${nextSearch}` : ""
+      },
+      { replace: true, state: location.state }
+    );
+  }, [location.pathname, location.search, location.state, navigate]);
+
+  const applyCustomerToWizard = useCallback((row) => {
+    if (!row) return;
+    setWizardManualCustomer((prev) => ({
+      ...prev,
+      nominativo: String(row.nominativo || "").trim(),
+      piva: String(row.piva || "").trim(),
+      indirizzo: String(row.indirizzo || "").trim(),
+      citta: String(row.citta || "").trim(),
+      cap: String(row.cap || "").trim(),
+      provincia: String(row.provincia || "").trim(),
+      email: String(row.email || "").trim(),
+      telefono: String(row.telefoni || "").trim()
+    }));
+    setWizardCustomerPickerOpen(false);
+  }, []);
+
+  const createCustomerQuick = async () => {
+    const nominativo = String(wizardNewCustomerForm.nominativo || "").trim();
+    const piva = String(wizardNewCustomerForm.piva || "").trim();
+    if (!nominativo || !piva) {
+      setWizardCustomerCreateError("Nominativo e P.IVA sono obbligatori.");
+      return;
+    }
+
+    setWizardCustomerCreateLoading(true);
+    setWizardCustomerCreateError("");
+    try {
+      const res = await fetch(`${API_BASE}/api/warehouse/fornitori`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          tipo: "CLIENTE",
+          nominativo,
+          piva,
+          indirizzo: wizardNewCustomerForm.indirizzo,
+          citta: wizardNewCustomerForm.citta,
+          cap: wizardNewCustomerForm.cap,
+          provincia: wizardNewCustomerForm.provincia,
+          telefoni: wizardNewCustomerForm.telefoni,
+          email: wizardNewCustomerForm.email,
+          pec: wizardNewCustomerForm.pec,
+          note: wizardNewCustomerForm.note
+        })
+      });
+      const payload = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(payload?.errore || "Errore creazione cliente.");
+
+      applyCustomerToWizard({
+        nominativo,
+        piva,
+        indirizzo: wizardNewCustomerForm.indirizzo,
+        citta: wizardNewCustomerForm.citta,
+        cap: wizardNewCustomerForm.cap,
+        provincia: wizardNewCustomerForm.provincia,
+        telefoni: wizardNewCustomerForm.telefoni,
+        email: wizardNewCustomerForm.email
+      });
+      setWizardCustomerCreateOpen(false);
+      setWizardNewCustomerForm(EMPTY_NEW_CUSTOMER_FORM);
+    } catch (err) {
+      setWizardCustomerCreateError(err?.message || "Errore creazione cliente.");
+    } finally {
+      setWizardCustomerCreateLoading(false);
+    }
+  };
+
+  const handleWarehouseRowSelect = useCallback((code) => {
+    setWizardWarehouseSelectedCode(String(code || ""));
+  }, []);
+
+  const addWarehouseToCart = useCallback((item) => {
+    const code = String(item?.codiceArticolo || "").trim();
+    if (!code) return;
+    setWizardCartRows((prev) => {
+      const existingIndex = prev.findIndex((row) => String(row.codiceArticolo || "") === code);
+      if (existingIndex >= 0) {
+        const next = [...prev];
+        const currentQty = Number(next[existingIndex].quantita || 0);
+        next[existingIndex] = {
+          ...next[existingIndex],
+          quantita: Math.max(1, currentQty + 1)
+        };
+        return next;
+      }
+      return [
+        ...prev,
+        {
+          codiceArticolo: code,
+          descrizione: String(item?.descrizione || "").trim(),
+          centroDiCosto: String(item?.centroDiCosto || "").trim(),
+          quantita: 1
+        }
+      ];
+    });
+  }, []);
+
+  const updateCartQty = useCallback((code, value) => {
+    const qty = Math.max(1, Number.parseInt(String(value || "1"), 10) || 1);
+    setWizardCartRows((prev) =>
+      prev.map((row) =>
+        String(row.codiceArticolo || "") === String(code || "")
+          ? {
+              ...row,
+              quantita: qty
+            }
+          : row
+      )
+    );
+  }, []);
+
+  const removeCartRow = useCallback((code) => {
+    setWizardCartRows((prev) => prev.filter((row) => String(row.codiceArticolo || "") !== String(code || "")));
+  }, []);
+
+  const wizardWarehouseBodyRows = useMemo(() => {
+    if (!wizardWarehouseLoading && deferredWizardWarehouseRows.length === 0) {
+      return (
+        <tr>
+          <td colSpan={4} className="px-3 py-6 text-center text-[var(--muted)]">
+            Nessun codice trovato.
+          </td>
+        </tr>
+      );
+    }
+
+    return deferredWizardWarehouseRows.map((item) => {
+      const code = String(item.codiceArticolo || "");
+      const isSelected = code === String(wizardWarehouseSelectedCode || "");
+      return (
+        <tr
+          key={code}
+          className={`border-t border-[var(--border)] ${isSelected ? "bg-emerald-500/10" : ""}`}
+          onClick={() => handleWarehouseRowSelect(code)}
+        >
+          <td className="px-2 py-1.5 font-semibold text-sky-400">
+            <span className="block truncate" title={item.codiceArticolo || "-"}>
+              {item.codiceArticolo || "-"}
+            </span>
+          </td>
+          <td className="px-2 py-1.5">
+            <span className="block truncate" title={item.descrizione || "-"}>
+              {item.descrizione || "-"}
+            </span>
+          </td>
+          <td className="px-2 py-1.5">
+            <span className="block truncate" title={item.centroDiCosto || "-"}>
+              {item.centroDiCosto || "-"}
+            </span>
+          </td>
+          <td className="px-2 py-1.5 text-center">
+            <button
+              type="button"
+              onClick={(event) => {
+                event.stopPropagation();
+                addWarehouseToCart(item);
+              }}
+              className="inline-flex h-7 w-7 items-center justify-center rounded-md border border-[var(--border)] text-xs text-[var(--muted)] hover:bg-[var(--hover)]"
+              aria-label={`Aggiungi ${item.codiceArticolo || "articolo"} al carrello`}
+            >
+              <i className="fa-solid fa-plus" aria-hidden="true" />
+            </button>
+          </td>
+        </tr>
+      );
+    });
+  }, [
+    addWarehouseToCart,
+    deferredWizardWarehouseRows,
+    handleWarehouseRowSelect,
+    wizardWarehouseLoading,
+    wizardWarehouseSelectedCode
+  ]);
+
+  const wizardCartBodyRows = useMemo(() => {
+    if (wizardCartRows.length === 0) {
+      return (
+        <tr>
+          <td colSpan={5} className="px-3 py-6 text-center text-[var(--muted)]">
+            Nessuna voce nel carrello.
+          </td>
+        </tr>
+      );
+    }
+
+    return wizardCartRows.map((row, index) => (
+      <tr
+        key={`cart-${row.codiceArticolo}`}
+        className={`border-t border-[var(--border)] ${index === wizardCartRows.length - 1 ? "border-b border-[var(--border)]" : ""}`}
+      >
+        <td className="px-1.5 py-1 font-semibold text-sky-400">{row.codiceArticolo || "-"}</td>
+        <td className="px-1.5 py-1">
+          <span className="block truncate" title={row.descrizione || "-"}>
+            {row.descrizione || "-"}
+          </span>
+        </td>
+        <td className="px-1.5 py-1">{row.centroDiCosto || "-"}</td>
+        <td className="px-1.5 py-1">
+          <input
+            type="number"
+            min="1"
+            value={row.quantita}
+            onChange={(event) => updateCartQty(row.codiceArticolo, event.target.value)}
+            className="h-7 w-16 rounded-md border border-[var(--border)] bg-[var(--surface)] px-1.5 text-xs text-[var(--page-fg)] shadow-sm outline-none"
+          />
+        </td>
+        <td className="px-1.5 py-1 text-center">
+          <button
+            type="button"
+            onClick={() => removeCartRow(row.codiceArticolo)}
+            className="inline-flex h-6 w-6 items-center justify-center rounded-md border border-[var(--border)] text-[var(--muted)] hover:bg-rose-500/15 hover:text-rose-400"
+            aria-label={`Rimuovi ${row.codiceArticolo || "articolo"} dal carrello`}
+          >
+            <i className="fa-solid fa-xmark" aria-hidden="true" />
+          </button>
+        </td>
+      </tr>
+    ));
+  }, [removeCartRow, updateCartQty, wizardCartRows]);
+
+  const wizardCustomerBodyRows = useMemo(() => {
+    if (!wizardCustomerLoading && deferredWizardCustomerRows.length === 0) {
+      return (
+        <tr>
+          <td colSpan={4} className="px-3 py-8 text-center text-[var(--muted)]">
+            Nessun cliente trovato.
+          </td>
+        </tr>
+      );
+    }
+
+    return deferredWizardCustomerRows.map((row) => (
+      <tr
+        key={`wizard-customer-${row.cod}`}
+        onClick={() => {
+          setWizardCustomerSelectedCod(Number(row.cod));
+          applyCustomerToWizard(row);
+        }}
+        className={`cursor-pointer border-t border-[var(--border)] ${
+          Number(row.cod) === Number(wizardCustomerSelectedCod) ? "bg-emerald-500/10" : ""
+        }`}
+      >
+        <td className="px-3 py-2 font-semibold text-sky-400 whitespace-nowrap">
+          <span className="block truncate" title={row.nominativo || "-"}>
+            {row.nominativo || "-"}
+          </span>
+        </td>
+        <td className="px-3 py-2 whitespace-nowrap">
+          <span className="block truncate" title={row.piva || "-"}>
+            {row.piva || "-"}
+          </span>
+        </td>
+        <td className="px-3 py-2 whitespace-nowrap">
+          <span className="block truncate" title={row.indirizzo || "-"}>
+            {row.indirizzo || "-"}
+          </span>
+        </td>
+        <td className="px-3 py-2 whitespace-nowrap">
+          <span className="block truncate" title={row.citta || "-"}>
+            {row.citta || "-"}
+          </span>
+        </td>
+      </tr>
+    ));
+  }, [applyCustomerToWizard, deferredWizardCustomerRows, wizardCustomerLoading, wizardCustomerSelectedCod]);
 
   const conditionsText = useMemo(() => {
     if (!detail) return "-";
@@ -339,53 +998,39 @@ export default function OffertePage() {
     return Math.max(Math.ceil(tot / limit), 1);
   }, [totals, limit]);
 
-  const selectedOfferType = useMemo(
-    () => OFFER_TYPES.find((item) => item.id === wizardOfferType) || null,
-    [wizardOfferType]
-  );
+  const selectedOfferType = useMemo(() => {
+    const key = String(wizardOfferType || "").trim();
+    if (!key) return null;
+    return (
+      wizardClauseRows.find((item) => String(item.cod || "") === key) ||
+      wizardClauseRows.find((item) => String(item.tipoOfferta || "").toUpperCase() === key.toUpperCase()) ||
+      null
+    );
+  }, [wizardClauseRows, wizardOfferType]);
 
-  const wizardPreviewCustomer = useMemo(() => {
-    if (wizardCustomerMode === "manual") return wizardManualCustomer;
-    if (!wizardSelectedParty) return EMPTY_MANUAL_CUSTOMER;
-    return {
-      nominativo: wizardSelectedParty.nominativo || "",
-      piva: wizardSelectedParty.piva || "",
-      indirizzo: wizardSelectedParty.indirizzo || "",
-      citta: wizardSelectedParty.citta || "",
-      cap: wizardSelectedParty.cap || "",
-      provincia: wizardSelectedParty.provincia || "",
-      email: wizardSelectedParty.email || "",
-      telefono: wizardSelectedParty.telefoni || ""
-    };
-  }, [wizardCustomerMode, wizardManualCustomer, wizardSelectedParty]);
+  const wizardPreviewCustomer = useMemo(() => wizardManualCustomer, [wizardManualCustomer]);
 
   const wizardValidation = useMemo(() => {
-    const errors = { anagrafica: "", magazzino: "", pagamento: "", offerta: "" };
-    if (wizardCustomerMode === "manual") {
-      if (!String(wizardManualCustomer.nominativo || "").trim()) {
-        errors.anagrafica = "Inserisci almeno il nominativo cliente.";
-      }
-    } else if (!wizardSelectedParty) {
-      errors.anagrafica = "Seleziona un cliente/fornitore.";
+    const errors = { anagrafica: "", magazzino: "", pagamento: "", clausole: "" };
+    if (!String(wizardManualCustomer.nominativo || "").trim()) {
+      errors.anagrafica = "Inserisci almeno il nominativo cliente.";
     }
-    if (!wizardSelectedWarehouse) errors.magazzino = "Seleziona un codice di magazzino.";
-    if (!wizardPaymentType) errors.pagamento = "Seleziona un tipo di pagamento.";
-    if (!wizardOfferType) errors.offerta = "Seleziona un tipo offerta.";
+    if (wizardCartRows.length === 0) errors.magazzino = "Aggiungi almeno un codice di magazzino al carrello.";
+    if (!String(wizardPaymentTerms || "").trim()) errors.pagamento = "Inserisci le condizioni di pagamento.";
+    if (!String(wizardClauseText || "").trim()) errors.clausole = "Inserisci o seleziona le clausole.";
     return errors;
   }, [
-    wizardCustomerMode,
     wizardManualCustomer.nominativo,
-    wizardOfferType,
-    wizardPaymentType,
-    wizardSelectedParty,
-    wizardSelectedWarehouse
+    wizardClauseText,
+    wizardPaymentTerms,
+    wizardCartRows.length
   ]);
 
   const canGoStep = (idx) => {
     if (idx === 0) return !wizardValidation.anagrafica;
     if (idx === 1) return !wizardValidation.magazzino;
     if (idx === 2) return !wizardValidation.pagamento;
-    if (idx === 3) return !wizardValidation.offerta;
+    if (idx === 3) return !wizardValidation.clausole;
     return true;
   };
 
@@ -658,14 +1303,23 @@ export default function OffertePage() {
                 <p className="text-xs uppercase tracking-[0.2em] text-[var(--muted)]">Nuova offerta</p>
                 <h2 className="mt-1 text-lg font-semibold">Wizard guidato</h2>
               </div>
-              <button
-                type="button"
-                className="flex h-9 w-9 items-center justify-center rounded-md border border-[var(--border)] text-[var(--muted)] hover:bg-[var(--hover)]"
-                onClick={() => setOfferWizardOpen(false)}
-                aria-label="Chiudi wizard"
-              >
-                <i className="fa-solid fa-xmark" aria-hidden="true" />
-              </button>
+              <div className="flex items-center gap-2">
+                <button
+                  type="button"
+                  className="ui-control h-9 px-3 text-xs"
+                  onClick={clearWizardDraft}
+                >
+                  Nuova bozza
+                </button>
+                <button
+                  type="button"
+                  className="flex h-9 w-9 items-center justify-center rounded-md border border-[var(--border)] text-[var(--muted)] hover:bg-[var(--hover)]"
+                  onClick={() => setOfferWizardOpen(false)}
+                  aria-label="Chiudi wizard"
+                >
+                  <i className="fa-solid fa-xmark" aria-hidden="true" />
+                </button>
+              </div>
             </div>
 
             <div className="grid min-h-0 flex-1 gap-3 overflow-hidden p-3 sm:grid-cols-1 sm:p-4 xl:grid-cols-[minmax(0,1.2fr)_minmax(360px,0.8fr)]">
@@ -714,119 +1368,102 @@ export default function OffertePage() {
                       })}
                     </div>
                   </div>
+                  <button
+                    type="button"
+                    onClick={clearWizardDraft}
+                    className="ui-control h-8 shrink-0 px-2.5 text-xs whitespace-nowrap"
+                  >
+                    Ricomincia
+                  </button>
 
-                  {wizardStepId === "anagrafica" ? (
-                    <div className="inline-flex h-8 shrink-0 items-center rounded-md border border-[var(--border)] bg-[var(--surface)] p-0.5">
-                      <button
-                        type="button"
-                        onClick={() => {
-                          setWizardCustomerMode("manual");
-                          setWizardSelectedParty(null);
-                        }}
-                        className={`inline-flex h-7 items-center rounded px-2.5 text-xs font-medium transition ${
-                          wizardCustomerMode === "manual"
-                            ? "bg-emerald-500/15 text-emerald-300"
-                            : "text-[var(--muted)] hover:bg-[var(--hover)]"
-                        }`}
-                      >
-                        Manuale
-                      </button>
-                      <button
-                        type="button"
-                        onClick={() => setWizardCustomerMode("db")}
-                        className={`inline-flex h-7 items-center rounded px-2.5 text-xs font-medium transition ${
-                          wizardCustomerMode === "db"
-                            ? "bg-emerald-500/15 text-emerald-300"
-                            : "text-[var(--muted)] hover:bg-[var(--hover)]"
-                        }`}
-                      >
-                        Da DB
-                      </button>
-                    </div>
-                  ) : null}
                 </div>
 
-                <div className="mt-3 min-h-0 flex-1 overflow-y-auto pr-1">
+                <div className={`mt-3 min-h-0 flex-1 pr-1 ${wizardStepId === "magazzino" ? "overflow-hidden" : "overflow-y-auto"}`}>
                   {wizardStepId === "anagrafica" ? (
                     <div className="space-y-3">
-                      {wizardCustomerMode === "manual" ? (
-                        <div className="grid gap-3 md:grid-cols-2">
-                          <label className="text-xs uppercase tracking-[0.12em] text-[var(--muted)]">
-                            Nominativo
+                      <div className="grid gap-3 md:grid-cols-2">
+                        <label className="text-xs uppercase tracking-[0.12em] text-[var(--muted)]">
+                          Nominativo
+                          <div className="relative mt-1">
                             <input
                               type="text"
                               value={wizardManualCustomer.nominativo}
                               onChange={(event) => setWizardManualCustomer((prev) => ({ ...prev, nominativo: event.target.value }))}
-                              className="ui-control mt-1 w-full px-3 text-sm normal-case tracking-normal"
+                              className="ui-control w-full pr-11 px-3 text-sm normal-case tracking-normal"
                             />
-                          </label>
-                          <label className="text-xs uppercase tracking-[0.12em] text-[var(--muted)]">
-                            P.IVA
-                            <input
-                              type="text"
-                              value={wizardManualCustomer.piva}
-                              onChange={(event) => setWizardManualCustomer((prev) => ({ ...prev, piva: event.target.value }))}
-                              className="ui-control mt-1 w-full px-3 text-sm normal-case tracking-normal"
-                            />
-                          </label>
-                          <label className="text-xs uppercase tracking-[0.12em] text-[var(--muted)] md:col-span-2">
-                            Indirizzo
-                            <input
-                              type="text"
-                              value={wizardManualCustomer.indirizzo}
-                              onChange={(event) => setWizardManualCustomer((prev) => ({ ...prev, indirizzo: event.target.value }))}
-                              className="ui-control mt-1 w-full px-3 text-sm normal-case tracking-normal"
-                            />
-                          </label>
-                          <label className="text-xs uppercase tracking-[0.12em] text-[var(--muted)]">
-                            Citta
-                            <input
-                              type="text"
-                              value={wizardManualCustomer.citta}
-                              onChange={(event) => setWizardManualCustomer((prev) => ({ ...prev, citta: event.target.value }))}
-                              className="ui-control mt-1 w-full px-3 text-sm normal-case tracking-normal"
-                            />
-                          </label>
-                          <label className="text-xs uppercase tracking-[0.12em] text-[var(--muted)]">
-                            CAP
-                            <input
-                              type="text"
-                              value={wizardManualCustomer.cap}
-                              onChange={(event) => setWizardManualCustomer((prev) => ({ ...prev, cap: event.target.value }))}
-                              className="ui-control mt-1 w-full px-3 text-sm normal-case tracking-normal"
-                            />
-                          </label>
-                          <label className="text-xs uppercase tracking-[0.12em] text-[var(--muted)]">
-                            Provincia
-                            <input
-                              type="text"
-                              value={wizardManualCustomer.provincia}
-                              onChange={(event) => setWizardManualCustomer((prev) => ({ ...prev, provincia: event.target.value }))}
-                              className="ui-control mt-1 w-full px-3 text-sm normal-case tracking-normal"
-                            />
-                          </label>
-                          <label className="text-xs uppercase tracking-[0.12em] text-[var(--muted)]">
-                            Email
-                            <input
-                              type="text"
-                              value={wizardManualCustomer.email}
-                              onChange={(event) => setWizardManualCustomer((prev) => ({ ...prev, email: event.target.value }))}
-                              className="ui-control mt-1 w-full px-3 text-sm normal-case tracking-normal"
-                            />
-                          </label>
-                        </div>
-                      ) : (
-                        <div className="min-h-0 rounded-md border border-[var(--border)] p-2">
-                          <ClientiFornitoriPicker onSelectRecord={setWizardSelectedParty} selectedCod={wizardSelectedParty?.cod || null} />
-                        </div>
-                      )}
+                            <button
+                              type="button"
+                              onClick={() => setWizardCustomerPickerOpen(true)}
+                              className="absolute right-1 top-1/2 inline-flex h-8 w-8 -translate-y-1/2 items-center justify-center rounded-md border border-[var(--border)] text-[var(--muted)] hover:bg-[var(--hover)]"
+                              aria-label="Cerca cliente da database"
+                              title="Cerca cliente da database"
+                            >
+                              <i className="fa-solid fa-magnifying-glass text-[11px]" aria-hidden="true" />
+                            </button>
+                          </div>
+                        </label>
+                        <label className="text-xs uppercase tracking-[0.12em] text-[var(--muted)]">
+                          P.IVA
+                          <input
+                            type="text"
+                            value={wizardManualCustomer.piva}
+                            onChange={(event) => setWizardManualCustomer((prev) => ({ ...prev, piva: event.target.value }))}
+                            className="ui-control mt-1 w-full px-3 text-sm normal-case tracking-normal"
+                          />
+                        </label>
+                        <label className="text-xs uppercase tracking-[0.12em] text-[var(--muted)] md:col-span-2">
+                          Indirizzo
+                          <input
+                            type="text"
+                            value={wizardManualCustomer.indirizzo}
+                            onChange={(event) => setWizardManualCustomer((prev) => ({ ...prev, indirizzo: event.target.value }))}
+                            className="ui-control mt-1 w-full px-3 text-sm normal-case tracking-normal"
+                          />
+                        </label>
+                        <label className="text-xs uppercase tracking-[0.12em] text-[var(--muted)]">
+                          Citta
+                          <input
+                            type="text"
+                            value={wizardManualCustomer.citta}
+                            onChange={(event) => setWizardManualCustomer((prev) => ({ ...prev, citta: event.target.value }))}
+                            className="ui-control mt-1 w-full px-3 text-sm normal-case tracking-normal"
+                          />
+                        </label>
+                        <label className="text-xs uppercase tracking-[0.12em] text-[var(--muted)]">
+                          CAP
+                          <input
+                            type="text"
+                            value={wizardManualCustomer.cap}
+                            onChange={(event) => setWizardManualCustomer((prev) => ({ ...prev, cap: event.target.value }))}
+                            className="ui-control mt-1 w-full px-3 text-sm normal-case tracking-normal"
+                          />
+                        </label>
+                        <label className="text-xs uppercase tracking-[0.12em] text-[var(--muted)]">
+                          Provincia
+                          <input
+                            type="text"
+                            value={wizardManualCustomer.provincia}
+                            onChange={(event) => setWizardManualCustomer((prev) => ({ ...prev, provincia: event.target.value }))}
+                            className="ui-control mt-1 w-full px-3 text-sm normal-case tracking-normal"
+                          />
+                        </label>
+                        <label className="text-xs uppercase tracking-[0.12em] text-[var(--muted)]">
+                          Email
+                          <input
+                            type="text"
+                            value={wizardManualCustomer.email}
+                            onChange={(event) => setWizardManualCustomer((prev) => ({ ...prev, email: event.target.value }))}
+                            className="ui-control mt-1 w-full px-3 text-sm normal-case tracking-normal"
+                          />
+                        </label>
+                      </div>
 
                       {wizardValidation.anagrafica ? <p className="text-sm text-amber-500">{wizardValidation.anagrafica}</p> : null}
                     </div>
                   ) : null}
 
                   {wizardStepId === "magazzino" ? (
-                    <div className="space-y-3">
+                    <div className="flex h-full min-h-0 flex-col gap-3 overflow-hidden">
                       <div className="ui-control flex items-center px-2">
                         <i className="fa-solid fa-boxes-stacked text-[12px] text-[var(--muted)]" aria-hidden="true" />
                         <input
@@ -839,113 +1476,125 @@ export default function OffertePage() {
                       </div>
                       {wizardWarehouseError ? <p className="text-sm text-rose-500">{wizardWarehouseError}</p> : null}
 
-                      <div className="rounded-md border border-[var(--border)]">
-                        <div className="max-h-[320px] overflow-auto">
-                          <table className="table-dense w-full min-w-[760px] table-fixed text-xs">
-                            <thead className="sticky top-0 bg-[var(--surface-strong)]">
-                              <tr className="text-left text-[10px] uppercase tracking-[0.15em] text-[var(--muted)]">
-                                <th className="w-[22%] px-3 py-2">Codice</th>
-                                <th className="w-[46%] px-3 py-2">Descrizione</th>
-                                <th className="w-[16%] px-3 py-2">Centro</th>
-                                <th className="w-[16%] px-3 py-2">Azione</th>
-                              </tr>
-                            </thead>
-                            <tbody>
-                              {wizardWarehouseRows.map((item) => {
-                                const isSelected = String(item.codiceArticolo || "") === String(wizardSelectedWarehouse?.codiceArticolo || "");
-                                return (
-                                  <tr key={String(item.codiceArticolo)} className={`border-t border-[var(--border)] ${isSelected ? "bg-emerald-500/10" : ""}`}>
-                                    <td className="px-3 py-2 font-semibold text-sky-400">{item.codiceArticolo || "-"}</td>
-                                    <td className="px-3 py-2">{item.descrizione || "-"}</td>
-                                    <td className="px-3 py-2">{item.centroDiCosto || "-"}</td>
-                                    <td className="px-3 py-2">
-                                      <button
-                                        type="button"
-                                        onClick={() => setWizardSelectedWarehouse(item)}
-                                        className="ui-control h-8 px-2 text-[11px]"
-                                      >
-                                        {isSelected ? "Selezionato" : "Seleziona"}
-                                      </button>
-                                    </td>
-                                  </tr>
-                                );
-                              })}
-                              {!wizardWarehouseLoading && wizardWarehouseRows.length === 0 ? (
-                                <tr>
-                                  <td colSpan={4} className="px-3 py-6 text-center text-[var(--muted)]">
-                                    Nessun codice trovato.
-                                  </td>
+                      <div className="grid min-h-0 flex-1 grid-rows-[minmax(0,61.8fr)_minmax(0,38.2fr)] gap-3 overflow-hidden">
+                        <div className="min-h-0 overflow-hidden rounded-md border border-[var(--border)]">
+                          <div className="h-full min-h-0 overflow-auto">
+                            <table className="table-dense w-full min-w-[760px] table-fixed text-xs whitespace-nowrap">
+                              <thead className="sticky top-0 bg-[var(--surface-strong)]">
+                                <tr className="text-left text-[10px] uppercase tracking-[0.15em] text-[var(--muted)]">
+                                  <th className="w-[24%] px-2 py-1.5">Codice</th>
+                                  <th className="w-[52%] px-2 py-1.5">Descrizione</th>
+                                  <th className="w-[18%] px-2 py-1.5">Centro</th>
+                                  <th className="w-[6%] px-2 py-1.5 text-center">+</th>
                                 </tr>
-                              ) : null}
-                            </tbody>
-                          </table>
+                              </thead>
+                              <tbody>{wizardWarehouseBodyRows}</tbody>
+                            </table>
+                          </div>
+                        </div>
+
+                        <div className="flex min-h-0 flex-col overflow-hidden rounded-md border border-[var(--border)]">
+                          <div className="border-b border-[var(--border)] bg-[var(--surface-strong)] px-3 py-2 text-[10px] uppercase tracking-[0.15em] text-[var(--muted)]">
+                            Carrello fornitura
+                          </div>
+                          <div className="min-h-0 flex-1 overflow-auto">
+                            <table className="table-dense w-full min-w-[760px] table-fixed text-xs whitespace-nowrap">
+                              <thead className="sticky top-0 bg-[var(--surface)]">
+                                <tr className="text-left text-[10px] uppercase tracking-[0.15em] text-[var(--muted)]">
+                                  <th className="w-[22%] px-1.5 py-1">Codice</th>
+                                  <th className="w-[46%] px-1.5 py-1">Descrizione</th>
+                                  <th className="w-[14%] px-1.5 py-1">Centro</th>
+                                  <th className="w-[12%] px-1.5 py-1">Quantita</th>
+                                  <th className="w-[6%] px-1.5 py-1 text-center" />
+                                </tr>
+                              </thead>
+                              <tbody>{wizardCartBodyRows}</tbody>
+                            </table>
+                          </div>
                         </div>
                       </div>
-
-                      <label className="text-xs uppercase tracking-[0.12em] text-[var(--muted)]">
-                        Quantita
-                        <input
-                          type="number"
-                          min="1"
-                          value={wizardQuantity}
-                          onChange={(event) => setWizardQuantity(Math.max(1, Number.parseInt(event.target.value || "1", 10) || 1))}
-                          className="ui-control mt-1 w-[140px] px-3 text-sm"
-                        />
-                      </label>
                       {wizardValidation.magazzino ? <p className="text-sm text-amber-500">{wizardValidation.magazzino}</p> : null}
                     </div>
                   ) : null}
 
                   {wizardStepId === "pagamento" ? (
-                    <div className="space-y-3">
-                      <p className="text-sm text-[var(--muted)]">Seleziona la condizione di pagamento.</p>
+                    <div className="flex h-full min-h-0 flex-col gap-3">
                       <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-3">
                         {PAYMENT_TYPES.map((item) => (
                           <button
                             key={item}
                             type="button"
-                            onClick={() => setWizardPaymentType(item)}
+                            onClick={() => {
+                              setWizardPaymentType(item);
+                              setWizardPaymentTerms(PAYMENT_TERMS_PRESET[item] || item);
+                            }}
                             className={`ui-control px-3 text-left text-sm ${wizardPaymentType === item ? "border-emerald-500 bg-emerald-500/10" : ""}`}
                           >
                             {item}
                           </button>
                         ))}
                       </div>
+                      <label className="block text-xs uppercase tracking-[0.12em] text-[var(--muted)]">
+                        Tipo pagamento
+                        <input
+                          type="text"
+                          value={wizardPaymentType}
+                          onChange={(event) => setWizardPaymentType(event.target.value)}
+                          placeholder="Es. Bonifico bancario"
+                          className="ui-control mt-1 w-full px-3 text-sm normal-case tracking-normal"
+                        />
+                      </label>
+                      <label className="flex min-h-0 flex-1 flex-col text-xs uppercase tracking-[0.12em] text-[var(--muted)]">
+                        Condizioni pagamento (fatture/contratti)
+                        <textarea
+                          value={wizardPaymentTerms}
+                          onChange={(event) => setWizardPaymentTerms(event.target.value)}
+                          placeholder="Es. 30% all'ordine, saldo a 60gg data fattura. Fatturazione mensile posticipata."
+                          className="mt-1 min-h-0 flex-1 w-full resize-none rounded-md border border-[var(--border)] bg-[var(--surface)] px-3 py-2 text-sm normal-case tracking-normal text-[var(--page-fg)] outline-none"
+                        />
+                      </label>
                       {wizardValidation.pagamento ? <p className="text-sm text-amber-500">{wizardValidation.pagamento}</p> : null}
                     </div>
                   ) : null}
 
-                  {wizardStepId === "offerta" ? (
-                    <div className="space-y-3">
-                      <div className="grid gap-2 sm:grid-cols-3">
-                        {OFFER_TYPES.map((item) => (
-                          <button
-                            key={item.id}
-                            type="button"
-                            onClick={() => setWizardOfferType(item.id)}
-                            className={`rounded-md border px-3 py-2 text-left text-sm ${wizardOfferType === item.id ? "border-emerald-500 bg-emerald-500/10" : "border-[var(--border)] hover:bg-[var(--hover)]"}`}
-                          >
-                            {item.label}
-                          </button>
-                        ))}
+                  {wizardStepId === "clausole" ? (
+                    <div className="flex h-full min-h-0 flex-col gap-3">
+                      <div className="ui-select-wrap">
+                        <select
+                          value={String(wizardOfferType || "")}
+                          disabled={wizardClauseLoading || wizardClauseRows.length === 0}
+                          onChange={(event) => {
+                            const selected = String(event.target.value || "");
+                            setWizardOfferType(selected);
+                            const match = wizardClauseRows.find((item) => String(item.cod) === selected);
+                            if (match) {
+                              setWizardClauseText(String(match.condizioni || ""));
+                            }
+                          }}
+                          className="ui-control ui-select w-full px-3 text-sm"
+                        >
+                          {wizardClauseRows.length === 0 ? (
+                            <option value="">Nessuna clausola disponibile</option>
+                          ) : null}
+                          {wizardClauseRows.map((item) => (
+                            <option key={`clausola-${item.cod}`} value={String(item.cod)}>
+                              {item.tipoOfferta}
+                            </option>
+                          ))}
+                        </select>
+                        <i className="ui-select-caret fa-solid fa-chevron-down" aria-hidden="true" />
                       </div>
-                      <label className="text-xs uppercase tracking-[0.12em] text-[var(--muted)]">
-                        Clausole precompilate
+                      <label className="flex min-h-0 flex-1 flex-col text-xs uppercase tracking-[0.12em] text-[var(--muted)]">
+                        Clausole contrattuali
                         <textarea
-                          readOnly
-                          value={selectedOfferType?.clauses || ""}
-                          className="mt-1 h-32 w-full resize-none rounded-md border border-[var(--border)] bg-[var(--surface-soft)] px-3 py-2 text-sm"
+                          value={wizardClauseText}
+                          onChange={(event) => setWizardClauseText(event.target.value)}
+                          className="mt-1 min-h-0 flex-1 w-full resize-none rounded-md border border-[var(--border)] bg-[var(--surface)] px-3 py-2 text-sm normal-case tracking-normal text-[var(--page-fg)] outline-none"
                         />
                       </label>
-                      <label className="text-xs uppercase tracking-[0.12em] text-[var(--muted)]">
-                        Note interne
-                        <textarea
-                          value={wizardNotes}
-                          onChange={(event) => setWizardNotes(event.target.value)}
-                          className="mt-1 h-24 w-full resize-none rounded-md border border-[var(--border)] bg-[var(--surface)] px-3 py-2 text-sm"
-                        />
-                      </label>
-                      {wizardValidation.offerta ? <p className="text-sm text-amber-500">{wizardValidation.offerta}</p> : null}
+                      {wizardClauseLoading ? <p className="text-sm text-[var(--muted)]">Caricamento clausole...</p> : null}
+                      {wizardClauseError ? <p className="text-sm text-rose-500">{wizardClauseError}</p> : null}
+                      {wizardValidation.clausole ? <p className="text-sm text-amber-500">{wizardValidation.clausole}</p> : null}
                     </div>
                   ) : null}
 
@@ -958,17 +1607,23 @@ export default function OffertePage() {
                       </div>
                       <div className="rounded-md border border-[var(--border)] bg-[var(--surface-soft)] p-3">
                         <p className="text-xs uppercase tracking-[0.15em] text-[var(--muted)]">Fornitura</p>
-                        <p className="mt-1 font-semibold">
-                          {wizardSelectedWarehouse
-                            ? `${wizardSelectedWarehouse.codiceArticolo || "-"} - ${wizardSelectedWarehouse.descrizione || "-"}`
-                            : "-"}
-                        </p>
-                        <p className="text-[var(--muted)]">Quantita: {wizardQuantity}</p>
+                        <p className="mt-1 font-semibold">Righe carrello: {wizardCartRows.length}</p>
+                        <div className="mt-1 space-y-1">
+                          {wizardCartRows.slice(0, 4).map((row) => (
+                            <p key={`summary-${row.codiceArticolo}`} className="text-xs text-[var(--muted)]">
+                              {row.codiceArticolo || "-"} - {row.descrizione || "-"} (qt {row.quantita || 0})
+                            </p>
+                          ))}
+                          {wizardCartRows.length === 0 ? <p className="text-xs text-[var(--muted)]">-</p> : null}
+                        </div>
                       </div>
                       <div className="rounded-md border border-[var(--border)] bg-[var(--surface-soft)] p-3">
                         <p className="text-xs uppercase tracking-[0.15em] text-[var(--muted)]">Condizioni</p>
                         <p>Pagamento: <span className="font-semibold">{wizardPaymentType || "-"}</span></p>
-                        <p>Tipo offerta: <span className="font-semibold">{selectedOfferType?.label || "-"}</span></p>
+                        <p className="mt-1 text-[var(--muted)] whitespace-pre-wrap">
+                          Condizioni pagamento: {wizardPaymentTerms || "-"}
+                        </p>
+                        <p>Clausola: <span className="font-semibold">{selectedOfferType?.tipoOfferta || "-"}</span></p>
                       </div>
                     </div>
                   ) : null}
@@ -996,7 +1651,6 @@ export default function OffertePage() {
 
               <aside className="flex min-h-0 min-w-0 flex-col rounded-md border border-[var(--border)] bg-[var(--surface)] p-3">
                 <p className="text-xs uppercase tracking-[0.2em] text-[var(--muted)]">Anteprima offerta</p>
-                <p className="text-xs text-[var(--muted)]">Carta intestata stile DDT</p>
                 <div className="mt-2 min-h-0 flex-1 overflow-auto rounded-md border border-[var(--border)] bg-slate-100/60 p-3">
                   <div className="mx-auto mb-3 w-full max-w-[820px] bg-white p-6 text-black shadow-sm">
                     <div className="border border-[#9ca3af]">
@@ -1010,7 +1664,7 @@ export default function OffertePage() {
                       </div>
                       <div className="grid grid-cols-[1fr_108px_88px] bg-[#0b8fd1] px-2 py-1 text-[11px] font-bold italic text-white">
                         <div>OFFERTA COMMERCIALE</div>
-                        <div className="border-l border-white/60 text-center">{selectedOfferType?.label?.toUpperCase() || "-"}</div>
+                        <div className="border-l border-white/60 text-center">{selectedOfferType?.tipoOfferta?.toUpperCase() || "-"}</div>
                         <div className="border-l border-white/60 text-center">{wizardDateLabel || "-"}</div>
                       </div>
                       <div className="border-t border-[#9ca3af] bg-[#0b8fd1] px-2 py-1 text-[11px] font-bold italic text-white">MITTENTE/CEDENTE</div>
@@ -1037,7 +1691,10 @@ export default function OffertePage() {
                       </div>
                       <div className="border-t border-[#9ca3af] bg-[#0b8fd1] px-2 py-1 text-[11px] font-bold italic text-white">CONDIZIONI COMMERCIALI</div>
                       <div className="border-t border-[#9ca3af] px-2 py-1 text-[11px] font-semibold italic">
-                        Pagamento: {wizardPaymentType || "-"} | Tipo offerta: {selectedOfferType?.label || "-"}
+                        Pagamento: {wizardPaymentType || "-"} | Clausola: {selectedOfferType?.tipoOfferta || "-"}
+                      </div>
+                      <div className="border-t border-[#9ca3af] px-2 py-1 text-[11px] font-semibold italic whitespace-pre-wrap">
+                        Condizioni pagamento: {wizardPaymentTerms || "-"}
                       </div>
                       <table className="w-full border-collapse text-[10px]">
                         <thead>
@@ -1045,16 +1702,26 @@ export default function OffertePage() {
                             <th className="border border-[#9ca3af] px-1 py-1 font-bold italic">Codice:</th>
                             <th className="border border-[#9ca3af] px-1 py-1 font-bold italic">Descrizione:</th>
                             <th className="border border-[#9ca3af] px-1 py-1 text-right font-bold italic">qt</th>
-                            <th className="border border-[#9ca3af] px-1 py-1 font-bold italic">Tipo</th>
+                            <th className="border border-[#9ca3af] px-1 py-1 font-bold italic">Clausola</th>
                           </tr>
                         </thead>
                         <tbody>
-                          <tr>
-                            <td className="border border-[#9ca3af] px-1 py-1">{wizardSelectedWarehouse?.codiceArticolo || "-"}</td>
-                            <td className="border border-[#9ca3af] px-1 py-1">{wizardSelectedWarehouse?.descrizione || "-"}</td>
-                            <td className="border border-[#9ca3af] px-1 py-1 text-right">{wizardQuantity || 0}</td>
-                            <td className="border border-[#9ca3af] px-1 py-1">{selectedOfferType?.label || "-"}</td>
-                          </tr>
+                          {wizardCartRows.length > 0 ? (
+                            wizardCartRows.map((row) => (
+                              <tr key={`preview-cart-${row.codiceArticolo}`}>
+                                <td className="border border-[#9ca3af] px-1 py-1">{row.codiceArticolo || "-"}</td>
+                                <td className="border border-[#9ca3af] px-1 py-1">{row.descrizione || "-"}</td>
+                                <td className="border border-[#9ca3af] px-1 py-1 text-right">{row.quantita || 0}</td>
+                                <td className="border border-[#9ca3af] px-1 py-1">{selectedOfferType?.tipoOfferta || "-"}</td>
+                              </tr>
+                            ))
+                          ) : (
+                            <tr>
+                              <td colSpan={4} className="border border-[#9ca3af] px-1 py-2 text-center text-[#6b7280]">
+                                -
+                              </td>
+                            </tr>
+                          )}
                         </tbody>
                       </table>
                     </div>
@@ -1062,7 +1729,7 @@ export default function OffertePage() {
                     <div className="border border-[#9ca3af] border-t-0">
                       <div className="bg-[#0b8fd1] px-2 py-1 text-[11px] font-bold italic text-white">CLAUSOLE</div>
                       <div className="min-h-[72px] px-2 py-1 text-[11px] font-semibold italic whitespace-pre-wrap">
-                        {selectedOfferType?.clauses || "-"}
+                        {wizardClauseText || "-"}
                       </div>
                       <div className="grid grid-cols-2 border-t border-[#9ca3af]">
                         <div className="border-r border-[#9ca3af]">
@@ -1108,6 +1775,202 @@ export default function OffertePage() {
                   </div>
                 </div>
               </aside>
+            </div>
+          </div>
+        </div>
+      ) : null}
+
+      {offerWizardOpen && wizardCustomerPickerOpen ? (
+        <div
+          className="fixed inset-0 z-[110] flex items-center justify-center bg-black/70 px-3"
+          onMouseDown={() => setWizardCustomerPickerOpen(false)}
+        >
+          <div
+            className="flex h-[78dvh] max-h-[78dvh] w-full max-w-[1100px] min-h-0 flex-col overflow-hidden rounded-lg border border-[var(--border)] bg-[var(--surface)] shadow-xl"
+            onMouseDown={(event) => event.stopPropagation()}
+          >
+            <div className="flex items-center justify-between gap-3 border-b border-[var(--border)] px-4 py-3">
+              <div>
+                <p className="text-xs uppercase tracking-[0.2em] text-[var(--muted)]">Database clienti</p>
+                <h3 className="text-sm font-semibold">Seleziona cliente</h3>
+              </div>
+              <button
+                type="button"
+                onClick={() => setWizardCustomerPickerOpen(false)}
+                className="inline-flex h-8 w-8 items-center justify-center rounded-md border border-[var(--border)] text-[var(--muted)] hover:bg-[var(--hover)]"
+                aria-label="Chiudi clienti"
+              >
+                <i className="fa-solid fa-xmark" aria-hidden="true" />
+              </button>
+            </div>
+
+            <div className="flex min-h-0 flex-1 flex-col p-3">
+              <div className="flex items-center gap-2">
+                <div className="ui-control flex min-w-0 flex-1 items-center px-2">
+                  <i className="fa-solid fa-magnifying-glass text-[12px] text-[var(--muted)]" aria-hidden="true" />
+                  <input
+                    type="text"
+                    value={wizardCustomerSearch}
+                    onChange={(event) => setWizardCustomerSearch(event.target.value)}
+                    placeholder="Cerca nominativo o P.IVA"
+                    className="ml-3 h-full w-full bg-transparent text-sm outline-none"
+                  />
+                </div>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setWizardCustomerCreateError("");
+                    setWizardCustomerCreateOpen(true);
+                  }}
+                  className="ui-control inline-flex h-10 w-10 items-center justify-center"
+                  aria-label="Nuovo cliente"
+                  title="Registra cliente al volo"
+                >
+                  <i className="fa-solid fa-plus" aria-hidden="true" />
+                </button>
+              </div>
+
+              {wizardCustomerError ? <p className="mt-2 text-sm text-rose-500">{wizardCustomerError}</p> : null}
+
+              <div className="mt-3 min-h-0 flex-1 overflow-auto rounded-md border border-[var(--border)]">
+                <table className="table-dense w-full min-w-[920px] table-fixed text-xs whitespace-nowrap">
+                  <thead className="sticky top-0 bg-[var(--surface-strong)]">
+                    <tr className="text-left text-[10px] uppercase tracking-[0.15em] text-[var(--muted)]">
+                      <th className="w-[38%] px-3 py-2 whitespace-nowrap">Nominativo</th>
+                      <th className="w-[18%] px-3 py-2 whitespace-nowrap">P.IVA</th>
+                      <th className="w-[30%] px-3 py-2 whitespace-nowrap">Indirizzo</th>
+                      <th className="w-[14%] px-3 py-2 whitespace-nowrap">Citta</th>
+                    </tr>
+                  </thead>
+                  <tbody>{wizardCustomerBodyRows}</tbody>
+                </table>
+              </div>
+            </div>
+          </div>
+        </div>
+      ) : null}
+
+      {offerWizardOpen && wizardCustomerPickerOpen && wizardCustomerCreateOpen ? (
+        <div
+          className="fixed inset-0 z-[120] flex items-center justify-center bg-black/75 px-3"
+          onMouseDown={() => setWizardCustomerCreateOpen(false)}
+        >
+          <div
+            className="w-full max-w-2xl rounded-lg border border-[var(--border)] bg-[var(--surface)] p-4 shadow-xl"
+            onMouseDown={(event) => event.stopPropagation()}
+          >
+            <div className="mb-3 flex items-center justify-between">
+              <h4 className="text-sm font-semibold">Nuovo cliente</h4>
+              <button
+                type="button"
+                onClick={() => setWizardCustomerCreateOpen(false)}
+                className="inline-flex h-8 w-8 items-center justify-center rounded-md border border-[var(--border)] text-[var(--muted)] hover:bg-[var(--hover)]"
+                aria-label="Chiudi nuovo cliente"
+              >
+                <i className="fa-solid fa-xmark" aria-hidden="true" />
+              </button>
+            </div>
+
+            <div className="grid gap-3 md:grid-cols-2">
+              <label className="text-xs uppercase tracking-[0.12em] text-[var(--muted)]">
+                Nominativo *
+                <input
+                  type="text"
+                  value={wizardNewCustomerForm.nominativo}
+                  onChange={(event) => setWizardNewCustomerForm((prev) => ({ ...prev, nominativo: event.target.value }))}
+                  className="ui-control mt-1 w-full px-3 text-sm normal-case tracking-normal"
+                />
+              </label>
+              <label className="text-xs uppercase tracking-[0.12em] text-[var(--muted)]">
+                P.IVA *
+                <input
+                  type="text"
+                  value={wizardNewCustomerForm.piva}
+                  onChange={(event) => setWizardNewCustomerForm((prev) => ({ ...prev, piva: event.target.value }))}
+                  className="ui-control mt-1 w-full px-3 text-sm normal-case tracking-normal"
+                />
+              </label>
+              <label className="text-xs uppercase tracking-[0.12em] text-[var(--muted)] md:col-span-2">
+                Indirizzo
+                <input
+                  type="text"
+                  value={wizardNewCustomerForm.indirizzo}
+                  onChange={(event) => setWizardNewCustomerForm((prev) => ({ ...prev, indirizzo: event.target.value }))}
+                  className="ui-control mt-1 w-full px-3 text-sm normal-case tracking-normal"
+                />
+              </label>
+              <label className="text-xs uppercase tracking-[0.12em] text-[var(--muted)]">
+                Citta
+                <input
+                  type="text"
+                  value={wizardNewCustomerForm.citta}
+                  onChange={(event) => setWizardNewCustomerForm((prev) => ({ ...prev, citta: event.target.value }))}
+                  className="ui-control mt-1 w-full px-3 text-sm normal-case tracking-normal"
+                />
+              </label>
+              <label className="text-xs uppercase tracking-[0.12em] text-[var(--muted)]">
+                CAP
+                <input
+                  type="text"
+                  value={wizardNewCustomerForm.cap}
+                  onChange={(event) => setWizardNewCustomerForm((prev) => ({ ...prev, cap: event.target.value }))}
+                  className="ui-control mt-1 w-full px-3 text-sm normal-case tracking-normal"
+                />
+              </label>
+              <label className="text-xs uppercase tracking-[0.12em] text-[var(--muted)]">
+                Provincia
+                <input
+                  type="text"
+                  value={wizardNewCustomerForm.provincia}
+                  onChange={(event) => setWizardNewCustomerForm((prev) => ({ ...prev, provincia: event.target.value }))}
+                  className="ui-control mt-1 w-full px-3 text-sm normal-case tracking-normal"
+                />
+              </label>
+              <label className="text-xs uppercase tracking-[0.12em] text-[var(--muted)]">
+                Telefono
+                <input
+                  type="text"
+                  value={wizardNewCustomerForm.telefoni}
+                  onChange={(event) => setWizardNewCustomerForm((prev) => ({ ...prev, telefoni: event.target.value }))}
+                  className="ui-control mt-1 w-full px-3 text-sm normal-case tracking-normal"
+                />
+              </label>
+              <label className="text-xs uppercase tracking-[0.12em] text-[var(--muted)]">
+                Email
+                <input
+                  type="text"
+                  value={wizardNewCustomerForm.email}
+                  onChange={(event) => setWizardNewCustomerForm((prev) => ({ ...prev, email: event.target.value }))}
+                  className="ui-control mt-1 w-full px-3 text-sm normal-case tracking-normal"
+                />
+              </label>
+              <label className="text-xs uppercase tracking-[0.12em] text-[var(--muted)]">
+                PEC
+                <input
+                  type="text"
+                  value={wizardNewCustomerForm.pec}
+                  onChange={(event) => setWizardNewCustomerForm((prev) => ({ ...prev, pec: event.target.value }))}
+                  className="ui-control mt-1 w-full px-3 text-sm normal-case tracking-normal"
+                />
+              </label>
+            </div>
+            {wizardCustomerCreateError ? <p className="mt-3 text-sm text-rose-500">{wizardCustomerCreateError}</p> : null}
+            <div className="mt-4 flex items-center justify-end gap-2">
+              <button
+                type="button"
+                onClick={() => setWizardCustomerCreateOpen(false)}
+                className="ui-control px-3 text-sm"
+              >
+                Annulla
+              </button>
+              <button
+                type="button"
+                onClick={createCustomerQuick}
+                disabled={wizardCustomerCreateLoading}
+                className="ui-control border-emerald-500 bg-emerald-500/15 px-3 text-sm text-emerald-300 disabled:cursor-not-allowed disabled:opacity-60"
+              >
+                {wizardCustomerCreateLoading ? "Creazione..." : "Registra cliente"}
+              </button>
             </div>
           </div>
         </div>

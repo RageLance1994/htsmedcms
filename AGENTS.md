@@ -74,3 +74,8 @@ Queste regole sono vincolanti per ogni modifica futura alla pagina `WarehouseGia
 - Valori mancanti:
   - Nessuna colonna viene rimossa in base al contenuto.
   - I campi mancanti mostrano sempre `-` (incluso `Seriale`) per coerenza visiva e semantica.
+
+## Regola globale no-sottotitoli (vincolante)
+- Non inserire sottotitoli descrittivi/caption sotto titoli o intestazioni di sezione, in nessuna pagina o modal.
+- Consentiti solo contenuti funzionali: label campo, testo placeholder, messaggi di errore/validazione, testo azione.
+- In caso di dubbio, rimuovere il sottotitolo.

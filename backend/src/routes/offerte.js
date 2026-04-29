@@ -16,7 +16,9 @@ const COLLECTIONS = {
   fattureEmesse: "Fatture_Emesse",
   scadenzeFattureEmesse: "Scadenze_Fatture_Emesse",
   vociPreventivo: "Voci_Preventivo",
-  centriDiCosto: "Centri di Costo"
+  centriDiCosto: "Centri di Costo",
+  clausoleLegacy: "cnd_contrattuali",
+  clausoleTemplates: "offerte_clausole"
 };
 
 let offersCollectionCache = { expiresAt: 0, name: COLLECTIONS.preventivi };
@@ -87,6 +89,11 @@ const toFiniteInt = (value, fallback) => {
 const clamp = (value, min, max) => Math.min(Math.max(value, min), max);
 
 const escapeRegex = (value) => String(value || "").replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+const normalizeMultilineText = (value) =>
+  String(value || "")
+    .replace(/\r\n/g, "\n")
+    .replace(/\r/g, "\n")
+    .trim();
 
 const toDateOrNull = (value) => {
   if (!value) return null;
@@ -245,6 +252,118 @@ const normalizePartyType = (value) => {
   if (hasFornitore) return "fornitore";
   return "altro";
 };
+
+const syncClauseTemplatesFromLegacy = async (db, { force = false } = {}) => {
+  const target = db.collection(COLLECTIONS.clausoleTemplates);
+  if (!force) {
+    const existingCount = await target.estimatedDocumentCount().catch(() => 0);
+    if (existingCount > 0) return { synced: 0, skipped: true, existingCount };
+  }
+
+  const legacyRows = await db
+    .collection(COLLECTIONS.clausoleLegacy)
+    .find(
+      {},
+      {
+        projection: {
+          _id: 0,
+          cod: 1,
+          "Tipo Offerta": 1,
+          Condizioni: 1,
+          LastEditDate: 1,
+          CreationDate: 1,
+          cod_azienda: 1
+        }
+      }
+    )
+    .toArray();
+
+  const operations = legacyRows
+    .map((row) => {
+      const legacyCod = Number(row?.cod);
+      const tipoOfferta = String(row?.["Tipo Offerta"] || "").trim();
+      const condizioni = normalizeMultilineText(row?.Condizioni);
+      if (!Number.isFinite(legacyCod) || !tipoOfferta || !condizioni) return null;
+      return {
+        updateOne: {
+          filter: { legacyCod },
+          update: {
+            $set: {
+              legacyCod,
+              tipoOfferta,
+              condizioni,
+              codAzienda: Number.isFinite(Number(row?.cod_azienda)) ? Number(row.cod_azienda) : null,
+              sourceCollection: COLLECTIONS.clausoleLegacy,
+              legacyLastEditDate: row?.LastEditDate || null,
+              legacyCreationDate: row?.CreationDate || null,
+              active: true,
+              updatedAt: new Date()
+            }
+          },
+          upsert: true
+        }
+      };
+    })
+    .filter(Boolean);
+
+  if (operations.length > 0) {
+    await target.bulkWrite(operations, { ordered: false });
+  }
+  await target.createIndex({ legacyCod: 1 }, { unique: true });
+  await target.createIndex({ tipoOfferta: 1, active: 1 });
+  return { synced: operations.length, skipped: false, existingCount: operations.length };
+};
+
+router.get("/clausole", async (req, res) => {
+  try {
+    const db = getDb();
+    const forceSync = String(req.query.sync || "").trim() === "1";
+    const syncInfo = await syncClauseTemplatesFromLegacy(db, { force: forceSync });
+    const rows = await db
+      .collection(COLLECTIONS.clausoleTemplates)
+      .aggregate([
+        { $match: { active: { $ne: false } } },
+        { $sort: { tipoOfferta: 1, legacyCod: -1, updatedAt: -1 } },
+        {
+          $group: {
+            _id: { $toUpper: "$tipoOfferta" },
+            doc: { $first: "$$ROOT" }
+          }
+        },
+        { $replaceRoot: { newRoot: "$doc" } },
+        { $sort: { tipoOfferta: 1 } },
+        {
+          $project: {
+            _id: 0,
+            legacyCod: 1,
+            tipoOfferta: 1,
+            condizioni: 1,
+            codAzienda: 1,
+            updatedAt: 1,
+            sourceCollection: 1
+          }
+        }
+      ])
+      .toArray();
+
+    return res.json({
+      ok: true,
+      total: rows.length,
+      sync: syncInfo,
+      data: rows.map((row) => ({
+        cod: Number(row.legacyCod || 0),
+        tipoOfferta: String(row.tipoOfferta || "").trim(),
+        condizioni: normalizeMultilineText(row.condizioni),
+        codAzienda: Number.isFinite(Number(row.codAzienda)) ? Number(row.codAzienda) : null,
+        updatedAt: row.updatedAt ? new Date(row.updatedAt).toISOString() : null,
+        sourceCollection: String(row.sourceCollection || "").trim()
+      }))
+    });
+  } catch (error) {
+    console.error("[offerte/clausole] errore", error);
+    return res.status(500).json({ errore: "Errore caricamento clausole." });
+  }
+});
 
 router.get("/", async (req, res) => {
   try {
