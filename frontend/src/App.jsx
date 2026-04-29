@@ -10,6 +10,8 @@ import WarehouseCausaliDepositi from "./pages/WarehouseCausaliDepositi.jsx";
 import WarehouseRiparazioni from "./pages/WarehouseRiparazioni.jsx";
 import WarehouseChecklistInterne from "./pages/WarehouseChecklistInterne.jsx";
 import OffertePage from "./pages/Offerte.jsx";
+import ClientiFornitoriPage from "./pages/ClientiFornitori.jsx";
+import AttivitaPage from "./pages/Attivita.jsx";
 
 export default function App() {
   return (
@@ -17,6 +19,8 @@ export default function App() {
       <Route path="/" element={<AccessPage />} />
       <Route path="/dashboard" element={<DashboardPage />} />
       <Route path="/offerte" element={<OffertePage />} />
+      <Route path="/attivita" element={<AttivitaPage />} />
+      <Route path="/anagrafiche/clienti-fornitori" element={<ClientiFornitoriPage />} />
       <Route path="/warehouse/giacenze" element={<WarehouseGiacenze />} />
       <Route path="/warehouse/mappe" element={<WarehouseMaps />} />
       <Route path="/warehouse/ddt" element={<WarehouseDdt />} />

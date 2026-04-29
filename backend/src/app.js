@@ -10,6 +10,7 @@ import authRouter from "./routes/auth.js";
 import warehouseRouter from "./routes/warehouse.js";
 import warehouseChecklistRouter from "./routes/warehouseChecklist.js";
 import offerteRouter from "./routes/offerte.js";
+import tasksRouter from "./routes/tasks.js";
 
 const app = express();
 const isProduction = process.env.NODE_ENV === "production" || !!process.env.K_SERVICE;
@@ -67,6 +68,7 @@ app.use("/api/health", healthRouter);
 app.use("/api/warehouse", warehouseRouter);
 app.use("/api/warehouse", warehouseChecklistRouter);
 app.use("/api/offerte", offerteRouter);
+app.use("/api/tasks", tasksRouter);
 
 if (isProduction) {
   const __filename = fileURLToPath(import.meta.url);
