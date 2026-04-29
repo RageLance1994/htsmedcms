@@ -236,6 +236,16 @@ const projectOfferRow = (row) => {
   };
 };
 
+const normalizePartyType = (value) => {
+  const text = String(value || "").toUpperCase();
+  const hasCliente = text.includes("CLIENTE");
+  const hasFornitore = text.includes("FORNITORE");
+  if (hasCliente && hasFornitore) return "cliente-fornitore";
+  if (hasCliente) return "cliente";
+  if (hasFornitore) return "fornitore";
+  return "altro";
+};
+
 router.get("/", async (req, res) => {
   try {
     const db = getDb();
@@ -588,6 +598,99 @@ router.get("/", async (req, res) => {
     return res
       .status(timeout ? 503 : 500)
       .json({ errore: timeout ? "Ricerca troppo pesante, riprova con filtri piu specifici." : "Errore durante il caricamento offerte." });
+  }
+});
+
+router.get("/clienti-fornitori", async (req, res) => {
+  try {
+    const db = getDb();
+    const search = String(req.query.search || "").trim();
+    const requestedType = String(req.query.tipo || "all").trim().toLowerCase();
+    const tipo = ["all", "cliente", "fornitore", "cliente-fornitore"].includes(requestedType) ? requestedType : "all";
+    const limit = clamp(toFiniteInt(req.query.limit, 250), 10, 2000);
+
+    const match = {};
+    if (tipo === "cliente") {
+      match.Tipo = /CLIENTE/i;
+    } else if (tipo === "fornitore") {
+      match.Tipo = /FORNITORE/i;
+    } else if (tipo === "cliente-fornitore") {
+      match.Tipo = /CLIENTE.*FORNITORE|FORNITORE.*CLIENTE/i;
+    }
+
+    if (search) {
+      const rx = new RegExp(escapeRegex(search), "i");
+      match.$or = [
+        { Nominativo: rx },
+        { PIVA: rx },
+        { "Cod Fiscale": rx },
+        { Citta: rx },
+        { email1: rx },
+        { PEC: rx }
+      ];
+    }
+
+    const rows = await db
+      .collection(COLLECTIONS.clientiFornitori)
+      .find(match, {
+        projection: {
+          _id: 0,
+          COD: 1,
+          Nominativo: 1,
+          Tipo: 1,
+          PIVA: 1,
+          "Cod Fiscale": 1,
+          Indirizzo: 1,
+          Citta: 1,
+          CAP: 1,
+          Provincia: 1,
+          Regione: 1,
+          telefoni: 1,
+          email1: 1,
+          PEC: 1,
+          Note: 1,
+          "Agenzia di Riferimento": 1,
+          "Agenzia di riferimento": 1
+        }
+      })
+      .sort({ Nominativo: 1, COD: 1 })
+      .limit(limit)
+      .toArray();
+
+    const data = rows.map((row) => ({
+      cod: Number(row.COD || 0),
+      nominativo: String(row.Nominativo || "").trim(),
+      tipo: normalizePartyType(row.Tipo),
+      tipoRaw: String(row.Tipo || "").trim(),
+      piva: String(row.PIVA || "").trim(),
+      codFiscale: String(row["Cod Fiscale"] || "").trim(),
+      indirizzo: String(row.Indirizzo || "").trim(),
+      citta: String(row.Citta || "").trim(),
+      cap: String(row.CAP || "").trim(),
+      provincia: String(row.Provincia || "").trim(),
+      regione: String(row.Regione || "").trim(),
+      telefoni: String(row.telefoni || "").trim(),
+      email: String(row.email1 || "").trim(),
+      pec: String(row.PEC || "").trim(),
+      note: String(row.Note || "").trim(),
+      agenziaRiferimento: String(row["Agenzia di Riferimento"] || row["Agenzia di riferimento"] || "").trim()
+    }));
+
+    return res.json({
+      ok: true,
+      filters: {
+        search,
+        tipo,
+        limit
+      },
+      total: data.length,
+      data
+    });
+  } catch (error) {
+    return res.status(500).json({
+      errore: "Errore caricamento clienti/fornitori",
+      dettaglio: error.message
+    });
   }
 });
 

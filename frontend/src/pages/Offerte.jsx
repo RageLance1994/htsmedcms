@@ -1,9 +1,55 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import AppLayout from "../components/AppLayout.jsx";
+import { ClientiFornitoriPicker } from "../features/clienti-fornitori/index.js";
+import ankeLogo from "../assets/Anke.ico";
+import htsmedLogo from "../assets/HTS-Med-logo.png";
+import iamerLogo from "../assets/iamers-news.jpg";
+import iso9001Logo from "../assets/91_ISO9001_rgb_120.gif";
+import jasAnzLogo from "../assets/JAS-ANZ-LOGO-MDQMS-e1643900679772.jpg";
+import certExtraLogo from "../assets/download.png";
 
 const API_BASE = import.meta.env.VITE_API_URL || "http://localhost:3000";
 
 const STATUS_OPTIONS = ["ALL", "VALIDATO", "BOZZA"];
+const WIZARD_STEPS = [
+  { id: "anagrafica", label: "Anagrafica cliente" },
+  { id: "magazzino", label: "Codice magazzino" },
+  { id: "pagamento", label: "Tipo pagamento" },
+  { id: "offerta", label: "Tipo offerta" },
+  { id: "riepilogo", label: "Riepilogo" }
+];
+const PAYMENT_TYPES = ["Bonifico 30 gg", "Bonifico 60 gg", "RIBA 30 gg", "RIBA 60 gg", "Contanti", "Carta"];
+const OFFER_TYPES = [
+  {
+    id: "standard",
+    label: "Standard",
+    clauses:
+      "Pagamento entro i termini concordati. Consegna franco magazzino venditore salvo accordi scritti. Eventuali resi previa autorizzazione."
+  },
+  {
+    id: "service",
+    label: "Service",
+    clauses:
+      "Interventi programmati inclusi. SLA di presa in carico entro 8 ore lavorative. Parti di consumo escluse se non diversamente pattuito."
+  },
+  {
+    id: "noleggio",
+    label: "Noleggio",
+    clauses:
+      "Canone mensile anticipato. Manutenzione ordinaria inclusa nel canone. Danni da uso improprio esclusi e fatturati separatamente."
+  }
+];
+
+const EMPTY_MANUAL_CUSTOMER = {
+  nominativo: "",
+  piva: "",
+  indirizzo: "",
+  citta: "",
+  cap: "",
+  provincia: "",
+  email: "",
+  telefono: ""
+};
 
 const formatCurrency = (value) =>
   new Intl.NumberFormat("it-IT", { style: "currency", currency: "EUR" }).format(
@@ -93,6 +139,20 @@ export default function OffertePage() {
   const [detailError, setDetailError] = useState("");
   const [detailModalOpen, setDetailModalOpen] = useState(false);
   const [conditionsTab, setConditionsTab] = useState("fornitura");
+  const [offerWizardOpen, setOfferWizardOpen] = useState(false);
+  const [wizardStep, setWizardStep] = useState(0);
+  const [wizardCustomerMode, setWizardCustomerMode] = useState("manual");
+  const [wizardManualCustomer, setWizardManualCustomer] = useState(EMPTY_MANUAL_CUSTOMER);
+  const [wizardSelectedParty, setWizardSelectedParty] = useState(null);
+  const [wizardWarehouseSearch, setWizardWarehouseSearch] = useState("");
+  const [wizardWarehouseRows, setWizardWarehouseRows] = useState([]);
+  const [wizardWarehouseLoading, setWizardWarehouseLoading] = useState(false);
+  const [wizardWarehouseError, setWizardWarehouseError] = useState("");
+  const [wizardSelectedWarehouse, setWizardSelectedWarehouse] = useState(null);
+  const [wizardQuantity, setWizardQuantity] = useState(1);
+  const [wizardPaymentType, setWizardPaymentType] = useState("");
+  const [wizardOfferType, setWizardOfferType] = useState("");
+  const [wizardNotes, setWizardNotes] = useState("");
   const listRequestAbortRef = useRef(null);
 
   const loadRows = async () => {
@@ -202,19 +262,69 @@ export default function OffertePage() {
   }, [selectedCod]);
 
   useEffect(() => {
-    if (!detailModalOpen) return;
+    if (!detailModalOpen && !offerWizardOpen) return;
     const onEsc = (event) => {
-      if (event.key === "Escape") setDetailModalOpen(false);
+      if (event.key !== "Escape") return;
+      if (offerWizardOpen) {
+        setOfferWizardOpen(false);
+        return;
+      }
+      setDetailModalOpen(false);
     };
     window.addEventListener("keydown", onEsc);
     return () => window.removeEventListener("keydown", onEsc);
-  }, [detailModalOpen]);
+  }, [detailModalOpen, offerWizardOpen]);
+
+  useEffect(() => {
+    if (!offerWizardOpen) return;
+    const controller = new AbortController();
+    const timer = setTimeout(async () => {
+      setWizardWarehouseLoading(true);
+      setWizardWarehouseError("");
+      try {
+        const params = new URLSearchParams({ limit: "220" });
+        const trimmed = String(wizardWarehouseSearch || "").trim();
+        if (trimmed) params.set("search", trimmed);
+        const res = await fetch(`${API_BASE}/api/warehouse/articoli?${params.toString()}`, { signal: controller.signal });
+        if (!res.ok) throw new Error("Errore caricamento codici di magazzino.");
+        const payload = await res.json();
+        setWizardWarehouseRows(Array.isArray(payload?.data) ? payload.data : []);
+      } catch (err) {
+        if (err?.name === "AbortError") return;
+        setWizardWarehouseRows([]);
+        setWizardWarehouseError(err?.message || "Errore caricamento codici di magazzino.");
+      } finally {
+        setWizardWarehouseLoading(false);
+      }
+    }, 220);
+
+    return () => {
+      clearTimeout(timer);
+      controller.abort();
+    };
+  }, [offerWizardOpen, wizardWarehouseSearch]);
 
   const openDetailModal = (cod) => {
     if (!cod) return;
     setSelectedCod(cod);
     setConditionsTab("fornitura");
     setDetailModalOpen(true);
+  };
+
+  const openOfferWizard = () => {
+    setWizardStep(0);
+    setWizardCustomerMode("manual");
+    setWizardManualCustomer(EMPTY_MANUAL_CUSTOMER);
+    setWizardSelectedParty(null);
+    setWizardWarehouseSearch("");
+    setWizardWarehouseRows([]);
+    setWizardWarehouseError("");
+    setWizardSelectedWarehouse(null);
+    setWizardQuantity(1);
+    setWizardPaymentType("");
+    setWizardOfferType("");
+    setWizardNotes("");
+    setOfferWizardOpen(true);
   };
 
   const conditionsText = useMemo(() => {
@@ -229,9 +339,80 @@ export default function OffertePage() {
     return Math.max(Math.ceil(tot / limit), 1);
   }, [totals, limit]);
 
+  const selectedOfferType = useMemo(
+    () => OFFER_TYPES.find((item) => item.id === wizardOfferType) || null,
+    [wizardOfferType]
+  );
+
+  const wizardPreviewCustomer = useMemo(() => {
+    if (wizardCustomerMode === "manual") return wizardManualCustomer;
+    if (!wizardSelectedParty) return EMPTY_MANUAL_CUSTOMER;
+    return {
+      nominativo: wizardSelectedParty.nominativo || "",
+      piva: wizardSelectedParty.piva || "",
+      indirizzo: wizardSelectedParty.indirizzo || "",
+      citta: wizardSelectedParty.citta || "",
+      cap: wizardSelectedParty.cap || "",
+      provincia: wizardSelectedParty.provincia || "",
+      email: wizardSelectedParty.email || "",
+      telefono: wizardSelectedParty.telefoni || ""
+    };
+  }, [wizardCustomerMode, wizardManualCustomer, wizardSelectedParty]);
+
+  const wizardValidation = useMemo(() => {
+    const errors = { anagrafica: "", magazzino: "", pagamento: "", offerta: "" };
+    if (wizardCustomerMode === "manual") {
+      if (!String(wizardManualCustomer.nominativo || "").trim()) {
+        errors.anagrafica = "Inserisci almeno il nominativo cliente.";
+      }
+    } else if (!wizardSelectedParty) {
+      errors.anagrafica = "Seleziona un cliente/fornitore.";
+    }
+    if (!wizardSelectedWarehouse) errors.magazzino = "Seleziona un codice di magazzino.";
+    if (!wizardPaymentType) errors.pagamento = "Seleziona un tipo di pagamento.";
+    if (!wizardOfferType) errors.offerta = "Seleziona un tipo offerta.";
+    return errors;
+  }, [
+    wizardCustomerMode,
+    wizardManualCustomer.nominativo,
+    wizardOfferType,
+    wizardPaymentType,
+    wizardSelectedParty,
+    wizardSelectedWarehouse
+  ]);
+
+  const canGoStep = (idx) => {
+    if (idx === 0) return !wizardValidation.anagrafica;
+    if (idx === 1) return !wizardValidation.magazzino;
+    if (idx === 2) return !wizardValidation.pagamento;
+    if (idx === 3) return !wizardValidation.offerta;
+    return true;
+  };
+
+  const changeWizardStep = (targetIndex) => {
+    const next = Math.min(Math.max(targetIndex, 0), WIZARD_STEPS.length - 1);
+    if (next <= wizardStep) {
+      setWizardStep(next);
+      return;
+    }
+    for (let idx = 0; idx < next; idx += 1) {
+      if (!canGoStep(idx)) {
+        setWizardStep(idx);
+        return;
+      }
+    }
+    setWizardStep(next);
+  };
+
   useEffect(() => {
     if (page > totalPages) setPage(totalPages);
   }, [page, totalPages]);
+
+  const wizardStepId = WIZARD_STEPS[wizardStep]?.id || "anagrafica";
+  const wizardDateLabel = useMemo(
+    () => new Intl.DateTimeFormat("it-IT", { day: "2-digit", month: "2-digit", year: "numeric" }).format(new Date()),
+    []
+  );
 
   return (
     <AppLayout
@@ -345,6 +526,16 @@ export default function OffertePage() {
             </select>
             <i className="ui-select-caret fa-solid fa-chevron-down" aria-hidden="true" />
           </div>
+
+          <button
+            type="button"
+            onClick={openOfferWizard}
+            className="ui-control inline-flex h-10 w-10 items-center justify-center text-sm font-semibold"
+            aria-label="Nuova offerta guidata"
+            title="Nuova offerta guidata"
+          >
+            <i className="fa-solid fa-plus" aria-hidden="true" />
+          </button>
         </div>
 
         {error ? <p className="mt-3 text-sm text-rose-500">{error}</p> : null}
@@ -452,6 +643,475 @@ export default function OffertePage() {
           </table>
         </div>
       </section>
+
+      {offerWizardOpen ? (
+        <div
+          className="fixed inset-0 z-[95] flex items-center justify-center overflow-hidden bg-black/80 px-0 py-0 sm:px-4"
+          onMouseDown={() => setOfferWizardOpen(false)}
+        >
+          <div
+            className="flex h-[92dvh] max-h-[92dvh] w-full max-w-[1820px] min-h-0 flex-col overflow-hidden rounded-none border border-[var(--border)] bg-[var(--surface)] shadow-xl sm:rounded-xl"
+            onMouseDown={(event) => event.stopPropagation()}
+          >
+            <div className="flex items-center justify-between gap-3 border-b border-[var(--border)] px-4 py-4 sm:px-6">
+              <div>
+                <p className="text-xs uppercase tracking-[0.2em] text-[var(--muted)]">Nuova offerta</p>
+                <h2 className="mt-1 text-lg font-semibold">Wizard guidato</h2>
+              </div>
+              <button
+                type="button"
+                className="flex h-9 w-9 items-center justify-center rounded-md border border-[var(--border)] text-[var(--muted)] hover:bg-[var(--hover)]"
+                onClick={() => setOfferWizardOpen(false)}
+                aria-label="Chiudi wizard"
+              >
+                <i className="fa-solid fa-xmark" aria-hidden="true" />
+              </button>
+            </div>
+
+            <div className="grid min-h-0 flex-1 gap-3 overflow-hidden p-3 sm:grid-cols-1 sm:p-4 xl:grid-cols-[minmax(0,1.2fr)_minmax(360px,0.8fr)]">
+              <section className="flex min-h-0 min-w-0 flex-col overflow-hidden rounded-md border border-[var(--border)] bg-[var(--surface)] p-3">
+                <div className="flex min-w-0 items-center gap-2 rounded-md border border-[var(--border)] bg-[var(--surface-soft)] p-1.5">
+                  <div className="min-w-0 flex-1 overflow-x-auto">
+                    <div className="flex min-w-max items-center gap-1 px-1">
+                      {WIZARD_STEPS.map((step, index) => {
+                        const isActive = index === wizardStep;
+                        const isDone = index < wizardStep && canGoStep(index);
+                        const connectorDone = index < wizardStep;
+                        return (
+                          <div key={step.id} className="flex items-center gap-1">
+                            <button
+                              type="button"
+                              onClick={() => changeWizardStep(index)}
+                              className={`inline-flex h-8 items-center gap-2 rounded-full border px-2.5 text-xs font-medium whitespace-nowrap transition ${
+                                isActive
+                                  ? "border-emerald-500 bg-emerald-500/10 text-[var(--page-fg)]"
+                                  : isDone
+                                    ? "border-sky-400/70 bg-sky-500/10 text-[var(--page-fg)]"
+                                    : "border-[var(--border)] bg-[var(--surface)] text-[var(--muted)] hover:bg-[var(--hover)]"
+                              }`}
+                            >
+                              <span
+                                className={`inline-flex h-5 w-5 items-center justify-center rounded-full border text-[10px] font-semibold ${
+                                  isActive
+                                    ? "border-emerald-400 bg-emerald-500/20 text-emerald-300"
+                                    : isDone
+                                      ? "border-sky-400/80 bg-sky-500/20 text-sky-300"
+                                      : "border-[var(--border)] bg-[var(--surface-soft)] text-[var(--muted)]"
+                                }`}
+                              >
+                                {isDone ? <i className="fa-solid fa-check" aria-hidden="true" /> : index + 1}
+                              </span>
+                              <span>{step.label}</span>
+                            </button>
+                            {index < WIZARD_STEPS.length - 1 ? (
+                              <span
+                                className={`h-px w-6 ${connectorDone ? "bg-emerald-400/70" : "bg-[var(--border)]"}`}
+                                aria-hidden="true"
+                              />
+                            ) : null}
+                          </div>
+                        );
+                      })}
+                    </div>
+                  </div>
+
+                  {wizardStepId === "anagrafica" ? (
+                    <div className="inline-flex h-8 shrink-0 items-center rounded-md border border-[var(--border)] bg-[var(--surface)] p-0.5">
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setWizardCustomerMode("manual");
+                          setWizardSelectedParty(null);
+                        }}
+                        className={`inline-flex h-7 items-center rounded px-2.5 text-xs font-medium transition ${
+                          wizardCustomerMode === "manual"
+                            ? "bg-emerald-500/15 text-emerald-300"
+                            : "text-[var(--muted)] hover:bg-[var(--hover)]"
+                        }`}
+                      >
+                        Manuale
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => setWizardCustomerMode("db")}
+                        className={`inline-flex h-7 items-center rounded px-2.5 text-xs font-medium transition ${
+                          wizardCustomerMode === "db"
+                            ? "bg-emerald-500/15 text-emerald-300"
+                            : "text-[var(--muted)] hover:bg-[var(--hover)]"
+                        }`}
+                      >
+                        Da DB
+                      </button>
+                    </div>
+                  ) : null}
+                </div>
+
+                <div className="mt-3 min-h-0 flex-1 overflow-y-auto pr-1">
+                  {wizardStepId === "anagrafica" ? (
+                    <div className="space-y-3">
+                      {wizardCustomerMode === "manual" ? (
+                        <div className="grid gap-3 md:grid-cols-2">
+                          <label className="text-xs uppercase tracking-[0.12em] text-[var(--muted)]">
+                            Nominativo
+                            <input
+                              type="text"
+                              value={wizardManualCustomer.nominativo}
+                              onChange={(event) => setWizardManualCustomer((prev) => ({ ...prev, nominativo: event.target.value }))}
+                              className="ui-control mt-1 w-full px-3 text-sm normal-case tracking-normal"
+                            />
+                          </label>
+                          <label className="text-xs uppercase tracking-[0.12em] text-[var(--muted)]">
+                            P.IVA
+                            <input
+                              type="text"
+                              value={wizardManualCustomer.piva}
+                              onChange={(event) => setWizardManualCustomer((prev) => ({ ...prev, piva: event.target.value }))}
+                              className="ui-control mt-1 w-full px-3 text-sm normal-case tracking-normal"
+                            />
+                          </label>
+                          <label className="text-xs uppercase tracking-[0.12em] text-[var(--muted)] md:col-span-2">
+                            Indirizzo
+                            <input
+                              type="text"
+                              value={wizardManualCustomer.indirizzo}
+                              onChange={(event) => setWizardManualCustomer((prev) => ({ ...prev, indirizzo: event.target.value }))}
+                              className="ui-control mt-1 w-full px-3 text-sm normal-case tracking-normal"
+                            />
+                          </label>
+                          <label className="text-xs uppercase tracking-[0.12em] text-[var(--muted)]">
+                            Citta
+                            <input
+                              type="text"
+                              value={wizardManualCustomer.citta}
+                              onChange={(event) => setWizardManualCustomer((prev) => ({ ...prev, citta: event.target.value }))}
+                              className="ui-control mt-1 w-full px-3 text-sm normal-case tracking-normal"
+                            />
+                          </label>
+                          <label className="text-xs uppercase tracking-[0.12em] text-[var(--muted)]">
+                            CAP
+                            <input
+                              type="text"
+                              value={wizardManualCustomer.cap}
+                              onChange={(event) => setWizardManualCustomer((prev) => ({ ...prev, cap: event.target.value }))}
+                              className="ui-control mt-1 w-full px-3 text-sm normal-case tracking-normal"
+                            />
+                          </label>
+                          <label className="text-xs uppercase tracking-[0.12em] text-[var(--muted)]">
+                            Provincia
+                            <input
+                              type="text"
+                              value={wizardManualCustomer.provincia}
+                              onChange={(event) => setWizardManualCustomer((prev) => ({ ...prev, provincia: event.target.value }))}
+                              className="ui-control mt-1 w-full px-3 text-sm normal-case tracking-normal"
+                            />
+                          </label>
+                          <label className="text-xs uppercase tracking-[0.12em] text-[var(--muted)]">
+                            Email
+                            <input
+                              type="text"
+                              value={wizardManualCustomer.email}
+                              onChange={(event) => setWizardManualCustomer((prev) => ({ ...prev, email: event.target.value }))}
+                              className="ui-control mt-1 w-full px-3 text-sm normal-case tracking-normal"
+                            />
+                          </label>
+                        </div>
+                      ) : (
+                        <div className="min-h-0 rounded-md border border-[var(--border)] p-2">
+                          <ClientiFornitoriPicker onSelectRecord={setWizardSelectedParty} selectedCod={wizardSelectedParty?.cod || null} />
+                        </div>
+                      )}
+
+                      {wizardValidation.anagrafica ? <p className="text-sm text-amber-500">{wizardValidation.anagrafica}</p> : null}
+                    </div>
+                  ) : null}
+
+                  {wizardStepId === "magazzino" ? (
+                    <div className="space-y-3">
+                      <div className="ui-control flex items-center px-2">
+                        <i className="fa-solid fa-boxes-stacked text-[12px] text-[var(--muted)]" aria-hidden="true" />
+                        <input
+                          type="text"
+                          value={wizardWarehouseSearch}
+                          onChange={(event) => setWizardWarehouseSearch(event.target.value)}
+                          placeholder="Ricerca codice o descrizione"
+                          className="ml-3 h-full w-full bg-transparent text-sm outline-none"
+                        />
+                      </div>
+                      {wizardWarehouseError ? <p className="text-sm text-rose-500">{wizardWarehouseError}</p> : null}
+
+                      <div className="rounded-md border border-[var(--border)]">
+                        <div className="max-h-[320px] overflow-auto">
+                          <table className="table-dense w-full min-w-[760px] table-fixed text-xs">
+                            <thead className="sticky top-0 bg-[var(--surface-strong)]">
+                              <tr className="text-left text-[10px] uppercase tracking-[0.15em] text-[var(--muted)]">
+                                <th className="w-[22%] px-3 py-2">Codice</th>
+                                <th className="w-[46%] px-3 py-2">Descrizione</th>
+                                <th className="w-[16%] px-3 py-2">Centro</th>
+                                <th className="w-[16%] px-3 py-2">Azione</th>
+                              </tr>
+                            </thead>
+                            <tbody>
+                              {wizardWarehouseRows.map((item) => {
+                                const isSelected = String(item.codiceArticolo || "") === String(wizardSelectedWarehouse?.codiceArticolo || "");
+                                return (
+                                  <tr key={String(item.codiceArticolo)} className={`border-t border-[var(--border)] ${isSelected ? "bg-emerald-500/10" : ""}`}>
+                                    <td className="px-3 py-2 font-semibold text-sky-400">{item.codiceArticolo || "-"}</td>
+                                    <td className="px-3 py-2">{item.descrizione || "-"}</td>
+                                    <td className="px-3 py-2">{item.centroDiCosto || "-"}</td>
+                                    <td className="px-3 py-2">
+                                      <button
+                                        type="button"
+                                        onClick={() => setWizardSelectedWarehouse(item)}
+                                        className="ui-control h-8 px-2 text-[11px]"
+                                      >
+                                        {isSelected ? "Selezionato" : "Seleziona"}
+                                      </button>
+                                    </td>
+                                  </tr>
+                                );
+                              })}
+                              {!wizardWarehouseLoading && wizardWarehouseRows.length === 0 ? (
+                                <tr>
+                                  <td colSpan={4} className="px-3 py-6 text-center text-[var(--muted)]">
+                                    Nessun codice trovato.
+                                  </td>
+                                </tr>
+                              ) : null}
+                            </tbody>
+                          </table>
+                        </div>
+                      </div>
+
+                      <label className="text-xs uppercase tracking-[0.12em] text-[var(--muted)]">
+                        Quantita
+                        <input
+                          type="number"
+                          min="1"
+                          value={wizardQuantity}
+                          onChange={(event) => setWizardQuantity(Math.max(1, Number.parseInt(event.target.value || "1", 10) || 1))}
+                          className="ui-control mt-1 w-[140px] px-3 text-sm"
+                        />
+                      </label>
+                      {wizardValidation.magazzino ? <p className="text-sm text-amber-500">{wizardValidation.magazzino}</p> : null}
+                    </div>
+                  ) : null}
+
+                  {wizardStepId === "pagamento" ? (
+                    <div className="space-y-3">
+                      <p className="text-sm text-[var(--muted)]">Seleziona la condizione di pagamento.</p>
+                      <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-3">
+                        {PAYMENT_TYPES.map((item) => (
+                          <button
+                            key={item}
+                            type="button"
+                            onClick={() => setWizardPaymentType(item)}
+                            className={`ui-control px-3 text-left text-sm ${wizardPaymentType === item ? "border-emerald-500 bg-emerald-500/10" : ""}`}
+                          >
+                            {item}
+                          </button>
+                        ))}
+                      </div>
+                      {wizardValidation.pagamento ? <p className="text-sm text-amber-500">{wizardValidation.pagamento}</p> : null}
+                    </div>
+                  ) : null}
+
+                  {wizardStepId === "offerta" ? (
+                    <div className="space-y-3">
+                      <div className="grid gap-2 sm:grid-cols-3">
+                        {OFFER_TYPES.map((item) => (
+                          <button
+                            key={item.id}
+                            type="button"
+                            onClick={() => setWizardOfferType(item.id)}
+                            className={`rounded-md border px-3 py-2 text-left text-sm ${wizardOfferType === item.id ? "border-emerald-500 bg-emerald-500/10" : "border-[var(--border)] hover:bg-[var(--hover)]"}`}
+                          >
+                            {item.label}
+                          </button>
+                        ))}
+                      </div>
+                      <label className="text-xs uppercase tracking-[0.12em] text-[var(--muted)]">
+                        Clausole precompilate
+                        <textarea
+                          readOnly
+                          value={selectedOfferType?.clauses || ""}
+                          className="mt-1 h-32 w-full resize-none rounded-md border border-[var(--border)] bg-[var(--surface-soft)] px-3 py-2 text-sm"
+                        />
+                      </label>
+                      <label className="text-xs uppercase tracking-[0.12em] text-[var(--muted)]">
+                        Note interne
+                        <textarea
+                          value={wizardNotes}
+                          onChange={(event) => setWizardNotes(event.target.value)}
+                          className="mt-1 h-24 w-full resize-none rounded-md border border-[var(--border)] bg-[var(--surface)] px-3 py-2 text-sm"
+                        />
+                      </label>
+                      {wizardValidation.offerta ? <p className="text-sm text-amber-500">{wizardValidation.offerta}</p> : null}
+                    </div>
+                  ) : null}
+
+                  {wizardStepId === "riepilogo" ? (
+                    <div className="space-y-3 text-sm">
+                      <div className="rounded-md border border-[var(--border)] bg-[var(--surface-soft)] p-3">
+                        <p className="text-xs uppercase tracking-[0.15em] text-[var(--muted)]">Cliente</p>
+                        <p className="mt-1 font-semibold">{wizardPreviewCustomer.nominativo || "-"}</p>
+                        <p className="text-[var(--muted)]">P.IVA: {wizardPreviewCustomer.piva || "-"}</p>
+                      </div>
+                      <div className="rounded-md border border-[var(--border)] bg-[var(--surface-soft)] p-3">
+                        <p className="text-xs uppercase tracking-[0.15em] text-[var(--muted)]">Fornitura</p>
+                        <p className="mt-1 font-semibold">
+                          {wizardSelectedWarehouse
+                            ? `${wizardSelectedWarehouse.codiceArticolo || "-"} - ${wizardSelectedWarehouse.descrizione || "-"}`
+                            : "-"}
+                        </p>
+                        <p className="text-[var(--muted)]">Quantita: {wizardQuantity}</p>
+                      </div>
+                      <div className="rounded-md border border-[var(--border)] bg-[var(--surface-soft)] p-3">
+                        <p className="text-xs uppercase tracking-[0.15em] text-[var(--muted)]">Condizioni</p>
+                        <p>Pagamento: <span className="font-semibold">{wizardPaymentType || "-"}</span></p>
+                        <p>Tipo offerta: <span className="font-semibold">{selectedOfferType?.label || "-"}</span></p>
+                      </div>
+                    </div>
+                  ) : null}
+                </div>
+
+                <div className="mt-3 flex items-center justify-between gap-2 border-t border-[var(--border)] pt-3">
+                  <button
+                    type="button"
+                    onClick={() => changeWizardStep(wizardStep - 1)}
+                    disabled={wizardStep === 0}
+                    className="ui-control px-4 text-sm disabled:cursor-not-allowed disabled:opacity-60"
+                  >
+                    Indietro
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => changeWizardStep(wizardStep + 1)}
+                    disabled={wizardStep >= WIZARD_STEPS.length - 1 || !canGoStep(wizardStep)}
+                    className="ui-control px-4 text-sm disabled:cursor-not-allowed disabled:opacity-60"
+                  >
+                    Avanti
+                  </button>
+                </div>
+              </section>
+
+              <aside className="flex min-h-0 min-w-0 flex-col rounded-md border border-[var(--border)] bg-[var(--surface)] p-3">
+                <p className="text-xs uppercase tracking-[0.2em] text-[var(--muted)]">Anteprima offerta</p>
+                <p className="text-xs text-[var(--muted)]">Carta intestata stile DDT</p>
+                <div className="mt-2 min-h-0 flex-1 overflow-auto rounded-md border border-[var(--border)] bg-slate-100/60 p-3">
+                  <div className="mx-auto mb-3 w-full max-w-[820px] bg-white p-6 text-black shadow-sm">
+                    <div className="border border-[#9ca3af]">
+                      <div className="grid min-h-[66px] grid-cols-2 items-center px-4 py-2">
+                        <div className="flex items-center">
+                          <img src={htsmedLogo} alt="HTSMED" className="max-h-10 max-w-[150px] object-contain" />
+                        </div>
+                        <div className="flex justify-end">
+                          <img src={ankeLogo} alt="ANKE" className="max-h-9 max-w-[120px] object-contain" />
+                        </div>
+                      </div>
+                      <div className="grid grid-cols-[1fr_108px_88px] bg-[#0b8fd1] px-2 py-1 text-[11px] font-bold italic text-white">
+                        <div>OFFERTA COMMERCIALE</div>
+                        <div className="border-l border-white/60 text-center">{selectedOfferType?.label?.toUpperCase() || "-"}</div>
+                        <div className="border-l border-white/60 text-center">{wizardDateLabel || "-"}</div>
+                      </div>
+                      <div className="border-t border-[#9ca3af] bg-[#0b8fd1] px-2 py-1 text-[11px] font-bold italic text-white">MITTENTE/CEDENTE</div>
+                      <div className="grid grid-cols-[1fr_180px] border-t border-[#9ca3af] text-[11px] font-semibold italic">
+                        <div className="px-2 py-1">HTS MED S.R.L. - Partita IVA: 02759040641</div>
+                        <div className="border-l border-[#9ca3af] px-2 py-1 text-right">Via Napoli 350 - Castellammare di Stabia (NA) 80053</div>
+                      </div>
+                      <div className="border-t border-[#9ca3af] bg-[#0b8fd1] px-2 py-1 text-right text-[11px] font-bold italic text-white">DESTINATARIO</div>
+                      <div className="grid grid-cols-[1fr_180px] border-t border-[#9ca3af] text-[11px] font-semibold italic">
+                        <div className="px-2 py-1">
+                          {(wizardPreviewCustomer.nominativo || "-") + " - Partita IVA: " + (wizardPreviewCustomer.piva || "-")}
+                        </div>
+                        <div className="border-l border-[#9ca3af] px-2 py-1 text-right">
+                          {[wizardPreviewCustomer.indirizzo || "-", wizardPreviewCustomer.cap, wizardPreviewCustomer.citta, wizardPreviewCustomer.provincia]
+                            .filter(Boolean)
+                            .join(" ")}
+                        </div>
+                      </div>
+                      <div className="border-t border-[#9ca3af] bg-[#0b8fd1] px-2 py-1 text-right text-[11px] font-bold italic text-white">Indirizzo Destinazione Merce:</div>
+                      <div className="border-t border-[#9ca3af] px-2 py-1 text-[11px] font-semibold italic">
+                        {[wizardPreviewCustomer.indirizzo || "-", wizardPreviewCustomer.cap, wizardPreviewCustomer.citta, wizardPreviewCustomer.provincia]
+                          .filter(Boolean)
+                          .join(" ")}
+                      </div>
+                      <div className="border-t border-[#9ca3af] bg-[#0b8fd1] px-2 py-1 text-[11px] font-bold italic text-white">CONDIZIONI COMMERCIALI</div>
+                      <div className="border-t border-[#9ca3af] px-2 py-1 text-[11px] font-semibold italic">
+                        Pagamento: {wizardPaymentType || "-"} | Tipo offerta: {selectedOfferType?.label || "-"}
+                      </div>
+                      <table className="w-full border-collapse text-[10px]">
+                        <thead>
+                          <tr className="bg-[#0b8fd1] text-left text-white">
+                            <th className="border border-[#9ca3af] px-1 py-1 font-bold italic">Codice:</th>
+                            <th className="border border-[#9ca3af] px-1 py-1 font-bold italic">Descrizione:</th>
+                            <th className="border border-[#9ca3af] px-1 py-1 text-right font-bold italic">qt</th>
+                            <th className="border border-[#9ca3af] px-1 py-1 font-bold italic">Tipo</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          <tr>
+                            <td className="border border-[#9ca3af] px-1 py-1">{wizardSelectedWarehouse?.codiceArticolo || "-"}</td>
+                            <td className="border border-[#9ca3af] px-1 py-1">{wizardSelectedWarehouse?.descrizione || "-"}</td>
+                            <td className="border border-[#9ca3af] px-1 py-1 text-right">{wizardQuantity || 0}</td>
+                            <td className="border border-[#9ca3af] px-1 py-1">{selectedOfferType?.label || "-"}</td>
+                          </tr>
+                        </tbody>
+                      </table>
+                    </div>
+                    <div className="min-h-[120px]" />
+                    <div className="border border-[#9ca3af] border-t-0">
+                      <div className="bg-[#0b8fd1] px-2 py-1 text-[11px] font-bold italic text-white">CLAUSOLE</div>
+                      <div className="min-h-[72px] px-2 py-1 text-[11px] font-semibold italic whitespace-pre-wrap">
+                        {selectedOfferType?.clauses || "-"}
+                      </div>
+                      <div className="grid grid-cols-2 border-t border-[#9ca3af]">
+                        <div className="border-r border-[#9ca3af]">
+                          <div className="bg-[#0b8fd1] px-2 py-1 text-[11px] font-bold italic text-white">NOTE INTERNE</div>
+                          <div className="min-h-[52px] px-2 py-1 text-[11px] font-semibold italic whitespace-pre-wrap">
+                            {wizardNotes || "-"}
+                          </div>
+                        </div>
+                        <div>
+                          <div className="bg-[#0b8fd1] px-2 py-1 text-[11px] font-bold italic text-white">FIRMA HTS MED</div>
+                          <div className="min-h-[30px] border-t border-[#9ca3af]" />
+                          <div className="bg-[#0b8fd1] px-2 py-1 text-[11px] font-bold italic text-white">FIRMA CLIENTE</div>
+                          <div className="min-h-[30px] border-t border-[#9ca3af]" />
+                        </div>
+                      </div>
+                    </div>
+                    <div className="mt-2 grid grid-cols-[1fr_1fr_170px] gap-2 border-t border-[#9ca3af] pt-2 text-[9px] text-[#1f2937]">
+                      <div>
+                        <strong>Sede Legale:</strong>
+                        <br />
+                        Via Napoli 350 - 80053
+                        <br />
+                        Castellammare di Stabia (NA)
+                        <br />
+                        P. IVA: 02759040641
+                      </div>
+                      <div>
+                        <strong>Sede Operativa:</strong>
+                        <br />
+                        Via Napoli 350 - 80053
+                        <br />
+                        Castellammare di Stabia (NA)
+                        <br />
+                        www.htsmed.com
+                      </div>
+                      <div className="flex flex-wrap items-end justify-end gap-1.5">
+                        <img src={iamerLogo} alt="IAMER" className="max-h-6 max-w-[52px] object-contain" />
+                        <img src={iso9001Logo} alt="ISO 9001" className="max-h-6 max-w-[52px] object-contain" />
+                        <img src={jasAnzLogo} alt="JAS ANZ" className="max-h-6 max-w-[52px] object-contain" />
+                        <img src={certExtraLogo} alt="Certificazioni" className="max-h-6 max-w-[52px] object-contain" />
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              </aside>
+            </div>
+          </div>
+        </div>
+      ) : null}
 
       {detailModalOpen ? (
         <div

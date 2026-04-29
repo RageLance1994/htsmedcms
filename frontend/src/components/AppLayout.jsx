@@ -67,6 +67,7 @@ export const APP_SECTIONS = [
 
 const APP_NAV_ROUTES = {
   Offerte: "/offerte",
+  "Clienti e Fornitori": "/anagrafiche/clienti-fornitori",
   Giacenze: "/warehouse/giacenze",
   "Piantina Magazzino": "/warehouse/mappe",
   "DDT-Doc. di Trasporto": "/warehouse/ddt",
