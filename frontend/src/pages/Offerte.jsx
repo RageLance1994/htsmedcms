@@ -371,9 +371,10 @@ export default function OffertePage() {
               type="button"
               disabled={page === 1}
               onClick={() => setPage((prev) => Math.max(prev - 1, 1))}
-              className="h-9 rounded-md border border-[var(--border)] bg-[var(--surface)] px-2 text-xs shadow-sm disabled:opacity-50"
+              className="inline-flex h-8 w-8 items-center justify-center rounded-md border border-[var(--border)] bg-[var(--surface)] text-xs text-[var(--muted)] shadow-sm transition hover:bg-[var(--hover)] disabled:opacity-50"
+              aria-label="Pagina precedente"
             >
-              Prev
+              <i className="fa-solid fa-caret-left" aria-hidden="true" />
             </button>
             <span className="text-xs">
               {page} / {totalPages}
@@ -382,9 +383,10 @@ export default function OffertePage() {
               type="button"
               disabled={page >= totalPages}
               onClick={() => setPage((prev) => Math.min(prev + 1, totalPages))}
-              className="h-9 rounded-md border border-[var(--border)] bg-[var(--surface)] px-2 text-xs shadow-sm disabled:opacity-50"
+              className="inline-flex h-8 w-8 items-center justify-center rounded-md border border-[var(--border)] bg-[var(--surface)] text-xs text-[var(--muted)] shadow-sm transition hover:bg-[var(--hover)] disabled:opacity-50"
+              aria-label="Pagina successiva"
             >
-              Next
+              <i className="fa-solid fa-caret-right" aria-hidden="true" />
             </button>
           </div>
         </div>

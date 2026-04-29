@@ -2123,9 +2123,10 @@ export default function WarehouseGiacenze() {
                 type="button"
                 disabled={page === 1}
                 onClick={() => setPage((prev) => Math.max(prev - 1, 1))}
-                className="rounded-md border border-[var(--border)] px-3 py-1 disabled:opacity-50"
+                className="inline-flex h-8 w-8 items-center justify-center rounded-md border border-[var(--border)] text-xs text-[var(--muted)] transition hover:bg-[var(--hover)] disabled:opacity-50"
+                aria-label="Pagina precedente"
               >
-                Prev
+                <i className="fa-solid fa-caret-left" aria-hidden="true" />
               </button>
               <span className="text-[var(--muted)]">
                 {page} / {totalPages}
@@ -2134,9 +2135,10 @@ export default function WarehouseGiacenze() {
                 type="button"
                 disabled={page >= totalPages}
                 onClick={() => setPage((prev) => Math.min(prev + 1, totalPages))}
-                className="rounded-md border border-[var(--border)] px-3 py-1 disabled:opacity-50"
+                className="inline-flex h-8 w-8 items-center justify-center rounded-md border border-[var(--border)] text-xs text-[var(--muted)] transition hover:bg-[var(--hover)] disabled:opacity-50"
+                aria-label="Pagina successiva"
               >
-                Next
+                <i className="fa-solid fa-caret-right" aria-hidden="true" />
               </button>
             </div>
           </div>
@@ -2818,9 +2820,10 @@ export default function WarehouseGiacenze() {
                     type="button"
                     disabled={movementsPage === 1}
                     onClick={() => setMovementsPage((prev) => Math.max(prev - 1, 1))}
-                    className="rounded-md border border-[var(--border)] px-3 py-1 disabled:opacity-50"
+                    className="inline-flex h-8 w-8 items-center justify-center rounded-md border border-[var(--border)] text-xs text-[var(--muted)] transition hover:bg-[var(--hover)] disabled:opacity-50"
+                    aria-label="Pagina precedente movimenti"
                   >
-                    Prev
+                    <i className="fa-solid fa-caret-left" aria-hidden="true" />
                   </button>
                   <span className="text-[var(--muted)]">
                     {movementsPage} / {movementsTotalPages}
@@ -2829,9 +2832,10 @@ export default function WarehouseGiacenze() {
                     type="button"
                     disabled={movementsPage >= movementsTotalPages}
                     onClick={() => setMovementsPage((prev) => Math.min(prev + 1, movementsTotalPages))}
-                    className="rounded-md border border-[var(--border)] px-3 py-1 disabled:opacity-50"
+                    className="inline-flex h-8 w-8 items-center justify-center rounded-md border border-[var(--border)] text-xs text-[var(--muted)] transition hover:bg-[var(--hover)] disabled:opacity-50"
+                    aria-label="Pagina successiva movimenti"
                   >
-                    Next
+                    <i className="fa-solid fa-caret-right" aria-hidden="true" />
                   </button>
                 </div>
               </div>
@@ -3387,10 +3391,11 @@ export default function WarehouseGiacenze() {
                     <button
                       type="button"
                       onClick={() => setQuickPartyOpen(true)}
-                      className="h-11 rounded-md border border-[var(--border)] px-3 text-xs font-semibold text-[var(--muted)] hover:bg-[var(--hover)]"
+                      className="inline-flex h-10 w-10 items-center justify-center rounded-md border border-emerald-500/40 bg-emerald-500/15 text-lg font-semibold text-emerald-300 transition hover:bg-emerald-500/25"
+                      aria-label="Nuovo cliente/fornitore"
+                      title="Nuovo cliente/fornitore"
                     >
-                      <i className="fa-solid fa-user-plus mr-2" aria-hidden="true" />
-                      Nuovo cliente/fornitore
+                      +
                     </button>
                   ) : null}
 

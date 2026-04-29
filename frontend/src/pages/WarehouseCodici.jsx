@@ -184,7 +184,7 @@ export default function WarehouseCodici() {
       <section className="warehouse-section flex min-h-0 min-w-0 w-full max-w-full flex-1 flex-col overflow-x-hidden rounded-lg border border-[var(--border)] bg-[var(--surface)] p-3 sm:p-4">
         <div className="flex flex-wrap items-center gap-3">
           <div className="min-w-0 flex-1">
-            <div className="flex items-center rounded-md border border-[var(--border)] bg-[var(--surface)] px-3 py-2">
+            <div className="flex h-10 items-center rounded-md border border-[var(--border)] bg-[var(--surface)] px-3">
               <button
                 type="button"
                 onClick={() => loadArticles(search)}
@@ -211,9 +211,11 @@ export default function WarehouseCodici() {
           <button
             type="button"
             onClick={openNewArticle}
-            className="rounded-md bg-emerald-500 px-3 py-2 text-sm font-semibold text-white hover:bg-emerald-600"
+            className="inline-flex h-10 w-10 items-center justify-center rounded-md border border-emerald-500/40 bg-emerald-500/15 text-lg font-semibold text-emerald-300 transition hover:bg-emerald-500/25"
+            aria-label="Nuovo codice"
+            title="Nuovo codice"
           >
-            Nuovo
+            +
           </button>
         </div>
 
@@ -241,9 +243,10 @@ export default function WarehouseCodici() {
               type="button"
               disabled={page === 1}
               onClick={() => setPage((prev) => Math.max(prev - 1, 1))}
-              className="rounded-md border border-[var(--border)] px-2 py-1 text-xs disabled:opacity-50"
+              className="inline-flex h-8 w-8 items-center justify-center rounded-md border border-[var(--border)] text-xs text-[var(--muted)] transition hover:bg-[var(--hover)] disabled:opacity-50"
+              aria-label="Pagina precedente"
             >
-              Prev
+              <i className="fa-solid fa-caret-left" aria-hidden="true" />
             </button>
             <span className="text-xs">
               {page} / {totalPages}
@@ -252,9 +255,10 @@ export default function WarehouseCodici() {
               type="button"
               disabled={page >= totalPages}
               onClick={() => setPage((prev) => Math.min(prev + 1, totalPages))}
-              className="rounded-md border border-[var(--border)] px-2 py-1 text-xs disabled:opacity-50"
+              className="inline-flex h-8 w-8 items-center justify-center rounded-md border border-[var(--border)] text-xs text-[var(--muted)] transition hover:bg-[var(--hover)] disabled:opacity-50"
+              aria-label="Pagina successiva"
             >
-              Next
+              <i className="fa-solid fa-caret-right" aria-hidden="true" />
             </button>
           </div>
         </div>

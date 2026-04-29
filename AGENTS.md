@@ -58,6 +58,7 @@ Queste regole sono vincolanti per ogni modifica futura alla pagina `WarehouseGia
 
 ## Regola globale controlli UI (design system)
 - Input, select e bottoni di filtro/toolbar devono avere altezza coerente nella stessa riga (no componenti "sfasati").
+- Searchbar e pulsante azione `+` nelle toolbar devono avere altezza identica (`h-10` / 40px): non sono ammessi casi in cui la searchbar risulti più alta del `+`.
 - Le select devono usare caret custom con padding destro adeguato (caret mai attaccato al bordo destro).
 - Evitare mix improvvisati di classi per i controlli: usare classi UI condivise e riutilizzabili (baseline stile shadcn-like).
 

@@ -252,7 +252,7 @@ export default function WarehouseDdt() {
           <label className="text-xs uppercase tracking-[0.2em] text-[var(--muted)]">Ricerca</label>
           <div className="mt-2 flex min-w-0 flex-wrap items-center gap-3">
             <div className="min-w-0 flex-1">
-              <div className="flex items-center rounded-md border border-[var(--border)] bg-[var(--surface)] px-3 py-2">
+              <div className="flex h-10 items-center rounded-md border border-[var(--border)] bg-[var(--surface)] px-3">
                 <button
                   type="button"
                   onClick={() => loadDdtList(debouncedSearch)}
@@ -272,20 +272,6 @@ export default function WarehouseDdt() {
                   placeholder="N DDT, nominativo, trasporto, causale, note"
                   className="ml-3 w-full bg-transparent text-sm outline-none"
                 />
-                <button
-                  type="button"
-                  className={`ml-2 flex h-8 w-8 min-h-[32px] min-w-[32px] items-center justify-center rounded-md border border-[var(--border)] text-[var(--muted)] transition ${
-                    flagOnly ? "bg-rose-500/20 text-rose-400" : "hover:bg-[var(--hover)]"
-                  }`}
-                  onClick={() => {
-                    setPage(1);
-                    setFlagOnly((prev) => !prev);
-                  }}
-                  aria-label="Flag"
-                  title="Flag (placeholder)"
-                >
-                  <i className="fa fa-warning text-[12px]" aria-hidden="true" />
-                </button>
                 <button
                   type="button"
                   className="ml-2 flex h-8 w-8 min-h-[32px] min-w-[32px] items-center justify-center rounded-md border border-[var(--border)] text-[var(--muted)] hover:bg-[var(--hover)]"
@@ -317,9 +303,10 @@ export default function WarehouseDdt() {
                 type="button"
                 disabled={page === 1}
                 onClick={() => setPage((prev) => Math.max(prev - 1, 1))}
-                className="rounded-md border border-[var(--border)] px-3 py-1 disabled:opacity-50"
+                className="inline-flex h-8 w-8 items-center justify-center rounded-md border border-[var(--border)] text-xs text-[var(--muted)] transition hover:bg-[var(--hover)] disabled:opacity-50"
+                aria-label="Pagina precedente"
               >
-                Prev
+                <i className="fa-solid fa-caret-left" aria-hidden="true" />
               </button>
               <span className="text-[var(--muted)]">
                 {page} / {totalPages}
@@ -328,9 +315,10 @@ export default function WarehouseDdt() {
                 type="button"
                 disabled={page >= totalPages}
                 onClick={() => setPage((prev) => Math.min(prev + 1, totalPages))}
-                className="rounded-md border border-[var(--border)] px-3 py-1 disabled:opacity-50"
+                className="inline-flex h-8 w-8 items-center justify-center rounded-md border border-[var(--border)] text-xs text-[var(--muted)] transition hover:bg-[var(--hover)] disabled:opacity-50"
+                aria-label="Pagina successiva"
               >
-                Next
+                <i className="fa-solid fa-caret-right" aria-hidden="true" />
               </button>
             </div>
           </div>

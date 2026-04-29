@@ -631,7 +631,7 @@ export default function WarehouseMaps() {
           <label className="text-xs uppercase tracking-[0.2em] text-[var(--muted)]">Ricerca</label>
           <div className="mt-2 flex min-w-0 flex-wrap items-center gap-3">
             <div className="min-w-0 flex-1">
-              <div className="flex items-center rounded-md border border-[var(--border)] bg-[var(--surface)] px-3 py-2">
+              <div className="flex h-10 items-center rounded-md border border-[var(--border)] bg-[var(--surface)] px-3">
                 <button type="button" onClick={() => loadMaps()} disabled={loading} className="flex h-8 w-8 min-h-[32px] min-w-[32px] items-center justify-center rounded-md text-[var(--muted)] transition hover:bg-[var(--hover)] disabled:opacity-60" aria-label="Aggiorna elenco">
                   <i className="fa-solid fa-rotate-right text-[12px]" aria-hidden="true" />
                 </button>
@@ -640,8 +640,14 @@ export default function WarehouseMaps() {
               </div>
             </div>
 
-            <button type="button" onClick={() => setCreateOpen(true)} className="h-9 rounded-md border border-[var(--border)] px-3 text-xs font-semibold uppercase tracking-[0.15em] text-[var(--page-fg)] transition hover:bg-[var(--hover)]">
-              Nuovo magazzino
+            <button
+              type="button"
+              onClick={() => setCreateOpen(true)}
+              className="inline-flex h-10 w-10 items-center justify-center rounded-md border border-emerald-500/40 bg-emerald-500/15 text-lg font-semibold text-emerald-300 transition hover:bg-emerald-500/25"
+              aria-label="Nuovo magazzino"
+              title="Nuovo magazzino"
+            >
+              +
             </button>
 
             <div className="flex items-center gap-2 text-sm">
@@ -653,9 +659,25 @@ export default function WarehouseMaps() {
                   <option value="100">100</option>
                 </select>
               </div>
-              <button type="button" onClick={() => setPage((prev) => Math.max(1, prev - 1))} disabled={page <= 1} className="h-8 rounded-md border border-[var(--border)] px-3 text-xs text-[var(--muted)] transition hover:bg-[var(--hover)] disabled:opacity-40">Prev</button>
+              <button
+                type="button"
+                onClick={() => setPage((prev) => Math.max(1, prev - 1))}
+                disabled={page <= 1}
+                className="inline-flex h-8 w-8 items-center justify-center rounded-md border border-[var(--border)] text-xs text-[var(--muted)] transition hover:bg-[var(--hover)] disabled:opacity-40"
+                aria-label="Pagina precedente"
+              >
+                <i className="fa-solid fa-caret-left" aria-hidden="true" />
+              </button>
               <span className="text-xs text-[var(--muted)]">{page} / {totalPages}</span>
-              <button type="button" onClick={() => setPage((prev) => Math.min(totalPages, prev + 1))} disabled={page >= totalPages} className="h-8 rounded-md border border-[var(--border)] px-3 text-xs transition hover:bg-[var(--hover)] disabled:opacity-40">Next</button>
+              <button
+                type="button"
+                onClick={() => setPage((prev) => Math.min(totalPages, prev + 1))}
+                disabled={page >= totalPages}
+                className="inline-flex h-8 w-8 items-center justify-center rounded-md border border-[var(--border)] text-xs text-[var(--muted)] transition hover:bg-[var(--hover)] disabled:opacity-40"
+                aria-label="Pagina successiva"
+              >
+                <i className="fa-solid fa-caret-right" aria-hidden="true" />
+              </button>
             </div>
           </div>
           <p className="mt-2 text-xs text-[var(--muted)]">Da {fromIndex} a {toIndex} magazzini di {total}</p>

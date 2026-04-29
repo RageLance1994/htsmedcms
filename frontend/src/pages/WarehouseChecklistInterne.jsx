@@ -254,11 +254,18 @@ export default function WarehouseChecklistInterne() {
           >
           <div className="flex min-h-0 flex-col gap-3">
           <div className="flex items-center gap-2">
-            <div className="flex min-w-0 flex-1 items-center rounded-md border border-[var(--border)] bg-[var(--surface)] px-3 py-2">
+            <div className="flex h-10 min-w-0 flex-1 items-center rounded-md border border-[var(--border)] bg-[var(--surface)] px-3">
               <i className="fa-solid fa-magnifying-glass text-[12px] text-[var(--muted)]" aria-hidden="true" />
               <input value={search} onChange={(e) => setSearch(e.target.value)} placeholder="Protocollo, modello, fornitore" className="ml-3 w-full bg-transparent text-sm outline-none" />
             </div>
-            <button className="rounded-md bg-emerald-500 px-3 py-2 text-sm font-semibold text-white hover:bg-emerald-600" onClick={() => setNewOpen(true)}>Nuova Check</button>
+            <button
+              className="inline-flex h-10 w-10 items-center justify-center rounded-md border border-emerald-500/40 bg-emerald-500/15 text-lg font-semibold text-emerald-300 transition hover:bg-emerald-500/25"
+              onClick={() => setNewOpen(true)}
+              aria-label="Nuova checklist"
+              title="Nuova checklist"
+            >
+              +
+            </button>
           </div>
 
           <div className="min-h-[32dvh] max-h-[45dvh] flex-1 overflow-y-auto overflow-x-hidden rounded-md border border-[var(--border)] lg:min-h-0 lg:max-h-none">

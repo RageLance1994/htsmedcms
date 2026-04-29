@@ -172,7 +172,7 @@ export default function WarehouseCausaliDepositi() {
       <section className="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden rounded-lg border border-[var(--border)] bg-[var(--surface)] p-3 sm:p-4">
         <div className="flex flex-wrap items-center gap-3">
           <div className="min-w-0 flex-1">
-            <div className="flex items-center rounded-md border border-[var(--border)] bg-[var(--surface)] px-3 py-2">
+            <div className="flex h-10 items-center rounded-md border border-[var(--border)] bg-[var(--surface)] px-3">
               <i className="fa-solid fa-magnifying-glass text-[12px] text-[var(--muted)]" aria-hidden="true" />
               <input
                 type="text"
